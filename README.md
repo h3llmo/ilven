@@ -39,6 +39,7 @@ E2E_ANTHROPIC_API_KEY=... E2E_OPENAI_API_KEY=... docker compose --profile test r
 ## Options
 
 - **Container management from Nevli** (optional; needs docker.sock, which is root-equivalent): append
-  `:compose.docker.yaml` to `COMPOSE_FILE` in `.env`.
+  `:compose.docker.yaml` to `COMPOSE_FILE` in `.env`. Nevli reaches Docker only through `wollomatic/socket-proxy`, whose
+  allowlist permits exactly `GET /containers/json` and `POST /containers/<id>/restart`, and only from the nevli container.
 - **Production with Cloudflare Access:** in `.env`, set `COMPOSE_FILE=compose.yaml`, `ILVEN_AUTH_MODE=cloudflare`,
   `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`, `ILVEN_ADMIN_EMAILS` and `ILVEN_PUBLIC_URL`.

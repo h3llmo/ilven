@@ -280,7 +280,11 @@ AI, preset resolution from shared profile data. Unit tests cover scope enforceme
 - Criteria 2 and 3 verified manually with a real LLM and OpenAI (generate, list, confirmed delete in Pilot).
 - Not yet verified in e2e: criteria 2 and 3 against a real LLM and OpenAI (e2e test exists, runs when
   `E2E_ANTHROPIC_API_KEY` / `E2E_OPENAI_API_KEY` are set); UIs not clicked through in a browser;
-  `compose.docker.yaml` and Cloudflare Access mode untested.
+  Cloudflare Access mode untested.
+- `compose.docker.yaml` verified 2026-11-06 (enabled in this deployment): `wollomatic/socket-proxy` with a path allowlist
+  (list containers, restart a container by id; only nevli may connect); create/exec/images/inspect return 403.
+  Nevli `list_services` / `restart_service` work through it. The proxy runs as uid 0 with all capabilities dropped,
+  read-only, so it can open the root-owned socket whatever the host's docker gid.
 - No rate limiting yet; conversations are stateless (the plugin sends the history each turn).
 
 ### Public exposure (2026-11-06)
