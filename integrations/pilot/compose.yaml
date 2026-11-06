@@ -59,6 +59,7 @@ services:
       NEVLI_INTERNAL_URL: http://nevli:3001
       DMS_URL: http://nevli-dms:3000
       PILOT_MCP_URL: http://app-pilot:8081/mcp
+      PILOT_OPENAI_IMAGE_MODEL: ${PILOT_OPENAI_IMAGE_MODEL:-gpt-image-2.5-sunburst}
     volumes:
       - { type: volume, source: pilot-secrets, target: /run/pilot-secrets/db, read_only: true, volume: { subpath: db } }
       - { type: volume, source: pilot-secrets, target: /run/pilot-secrets/app, read_only: true, volume: { subpath: app } }

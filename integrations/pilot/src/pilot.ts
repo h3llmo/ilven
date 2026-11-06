@@ -35,7 +35,10 @@ async function openAiKey(ctx: PilotCtx, sub: string): Promise<string> {
 async function dms(ctx: PilotCtx, caller: Caller, path: string, init: RequestInit = {}) {
   const res = await fetch(`${ctx.dmsUrl}${path}`, { ...init, headers: { ...(init.headers as Record<string, string>), authorization: `Bearer ${caller.credential}` } });
   if (res.status === 404) throw new HttpError(404, "not_found", "Image not found");
-  if (!res.ok) throw new HttpError(502, "dms_error", `Document store error (HTTP ${res.status})`);
+  if (!res.ok) {
+    console.warn(JSON.stringify({ msg: "dms error", status: res.status, path: path.split("?")[0], body: (await res.text().catch(() => "")).slice(0, 300) }));
+    throw new HttpError(502, "dms_error", `Document store error (HTTP ${res.status})`);
+  }
   return res;
 }
 
@@ -48,8 +51,9 @@ export async function generateImage(ctx: PilotCtx, caller: Caller, prompt: strin
   });
   if (res.status === 401) throw new HttpError(409, "openai_key_rejected", "OpenAI rejected your API key. Update it in Pilot's settings.");
   if (!res.ok) {
-    const detail = ((await res.json().catch(() => ({}))) as { error?: { message?: string } }).error?.message ?? "";
-    throw new HttpError(502, "openai_error", `OpenAI could not generate the image (HTTP ${res.status}). ${detail.slice(0, 300)}`.trim());
+    const err = ((await res.json().catch(() => ({}))) as { error?: { message?: string; code?: string; type?: string } }).error ?? {};
+    console.warn(JSON.stringify({ msg: "openai image error", status: res.status, code: err.code, type: err.type, message: err.message?.slice(0, 300) }));
+    throw new HttpError(502, "openai_error", `OpenAI could not generate the image (HTTP ${res.status}). ${(err.message ?? "").slice(0, 300)}`.trim());
   }
   const b64 = ((await res.json()) as { data?: { b64_json?: string }[] }).data?.[0]?.b64_json;
   if (!b64) throw new HttpError(502, "openai_error", "OpenAI returned no image");

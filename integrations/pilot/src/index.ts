@@ -10,7 +10,7 @@ import { deleteImage, deleteOpenAiKey, generateImage, hasOpenAiKey, imageContent
 
 const PREFIX = "/apps/pilot";
 const db = createDb();
-const ctx: PilotCtx = { db, sealer: new Sealer(secret("PILOT_MASTER_KEY")), dmsUrl: env("DMS_URL", "http://nevli-dms:3000"), openaiModel: env("PILOT_OPENAI_IMAGE_MODEL", "gpt-image-1") };
+const ctx: PilotCtx = { db, sealer: new Sealer(secret("PILOT_MASTER_KEY")), dmsUrl: env("DMS_URL", "http://nevli-dms:3000"), openaiModel: env("PILOT_OPENAI_IMAGE_MODEL", "gpt-image-2.5-sunburst") };
 
 await retry("database", () => db.query("SELECT 1"));
 await migrate(db, [
