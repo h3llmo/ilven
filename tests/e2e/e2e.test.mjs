@@ -3,6 +3,8 @@
 // Optional real-LLM checks: E2E_ANTHROPIC_API_KEY (and E2E_OPENAI_API_KEY for actual image generation).
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import http from "node:http";
 
 const BASE = process.env.BASE_URL ?? "http://gateway";
 const TOKEN_URL = process.env.KEYCLOAK_TOKEN_URL;
@@ -11,7 +13,7 @@ const LLM_KEY = process.env.E2E_ANTHROPIC_API_KEY || "";
 const OPENAI_KEY = process.env.E2E_OPENAI_API_KEY || "";
 
 async function token(user) {
-  const res = await fetch(TOKEN_URL, { method: "POST", body: new URLSearchParams({ grant_type: "password", client_id: "ilven-e2e", username: user, password: user, scope: "openid" }) });
+  const res = await fetch(TOKEN_URL, { method: "POST", body: new URLSearchParams({ grant_type: "password", client_id: "ilven-e2e", username: user, password: readFileSync(`/run/ilven-secrets/keycloak-users/${user}`, "utf8").trim(), scope: "openid" }) });
   assert.equal(res.status, 200, `token for ${user}`);
   return (await res.json()).access_token;
 }
@@ -65,6 +67,17 @@ test("gateway: landing, front-ends, plugin, runtime config", async () => {
   for (const p of ["/", "/admin/", "/account/", "/plugin/ilven-plugin.js", "/apps/pilot/"]) assert.equal((await fetch(BASE + p)).status, 200, p);
   const cfg = await (await fetch(BASE + "/ilven-config.json")).json();
   assert.equal(cfg.authMode, "oidc");
+  // Host-based roots for the public hosts.
+  // fetch() ignores a custom Host header, so use node:http.
+  const get = (path, host) => new Promise((resolve, reject) => http.get(BASE + path, { headers: { host } }, (r) => { r.resume(); resolve(r); }).on("error", reject));
+  const root = async (host) => (await get("/", host)).headers.location;
+  assert.equal(await root("ilven-pilot.example.com"), "/apps/pilot/");
+  assert.equal(await root("ilven-admin.example.com"), "/admin/");
+  assert.equal(await root("ilven-account.example.com"), "/account/");
+  // Keycloak admin console and master realm are not reachable through public hosts.
+  for (const p of ["/auth/admin/", "/auth/realms/master/protocol/openid-connect/certs"])
+    assert.equal((await get(p, "ilven-auth.example.com")).statusCode, 404, p);
+  assert.equal((await get("/auth/realms/ilven/protocol/openid-connect/certs", "ilven-auth.example.com")).statusCode, 200);
   // Only containers that opted in with an app-* alias are reachable through /apps/*.
   assert.equal((await fetch(BASE + "/apps/nevli-db/")).status, 502);
 });

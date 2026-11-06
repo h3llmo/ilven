@@ -282,6 +282,13 @@ AI, preset resolution from shared profile data. Unit tests cover scope enforceme
   `compose.docker.yaml` and Cloudflare Access mode untested.
 - No rate limiting yet; conversations are stateless (the plugin sends the history each turn).
 
+### Public exposure (2026-11-06)
+Hosts `ilven-{auth,account,admin,pilot}.home-warlock.com` route through the existing `home-warlock` Cloudflare tunnel
+to the gateway (`192.168.1.14:8080`), with no Cloudflare Access policy: Keycloak is the gate. Keycloak runs in `start`
+mode with a fixed issuer host (`ILVEN_AUTH_URL`). The `keycloak-config` job enforces on every start: brute-force
+protection, open self-registration, redirect URIs for `ILVEN_PUBLIC_HOSTS`, and replacement of the seeded dev
+passwords. The gateway waits for that job before serving. The admin console and master realm are blocked on public hosts.
+
 ### Decisions taken during Phase 0 [TBC — confirm or change]
 1. **Ilven API key storage (§6):** verified by keyed hash (HMAC-SHA256); an AES-256-GCM sealed copy is also kept
    so Ilven-AI can present the key to apps. It is unsealed only by Nevli's internal session endpoint, only for the

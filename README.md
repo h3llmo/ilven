@@ -8,8 +8,20 @@ Self-hosted platform that gives containerized apps a scoped AI assistant. See [C
 docker compose up -d
 ```
 
-Open http://localhost:8080. Dev users (Keycloak): `admin` / `admin` (platform admin) and `alice` / `alice`.
-Every secret is generated inside the stack on first start, so there is nothing to configure.
+Open http://localhost:8080. Every secret is generated inside the stack on first start, so there is nothing to configure.
+Keycloak users `admin` (platform admin) and `alice` get generated passwords on first start (the realm's seeded dev
+passwords are replaced automatically). Read them with
+`docker run --rm -v ilven_secrets:/s:ro alpine cat /s/keycloak-users/admin` and change them in the Keycloak account console.
+Anyone can sign up (self-registration is on); brute-force protection is enabled.
+
+### Public hosts
+
+Exposed through the `home-warlock` Cloudflare tunnel (no Access policy; Keycloak handles login):
+https://ilven-auth.home-warlock.com (identity provider), https://ilven-account.home-warlock.com,
+https://ilven-admin.home-warlock.com, https://ilven-pilot.home-warlock.com. The root of `ilven-<app>.<domain>` opens
+`/apps/<app>/`. To add an app host, add its name to `ILVEN_PUBLIC_HOSTS` in `.env` (Keycloak redirect URIs are
+updated on start) and add a tunnel route and DNS record for it. The Keycloak admin console and master realm are only
+reachable from `localhost`.
 
 1. **Pilot** (http://localhost:8080/apps/pilot/): sign in, store your OpenAI key, generate images. Works without the assistant.
 2. **Ilven Account** (/account/): register, choose what to share (age, gender), get your Ilven API key.

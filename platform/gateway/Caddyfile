@@ -15,6 +15,24 @@
 		-Server
 	}
 
+	# Public hosts ilven-<name>.<domain>: the root of each host opens its app.
+	@rootAccount {
+		path /
+		header_regexp Host ^ilven-(account|auth)\.
+	}
+	redir @rootAccount /account/
+	@rootAdmin {
+		path /
+		header_regexp Host ^ilven-admin\.
+	}
+	redir @rootAdmin /admin/
+	@rootApp {
+		path /
+		header_regexp host Host ^ilven-([a-z0-9][a-z0-9-]{0,30})\.
+		not header_regexp Host ^ilven-(account|auth|admin)\.
+	}
+	redir @rootApp /apps/{re.host.1}/
+
 	# Runtime config for the front-ends (no secrets).
 	handle /ilven-config.json {
 		header Content-Type application/json
@@ -24,6 +42,12 @@
 
 	# Dev identity provider (Keycloak, compose.dev.yaml). Absent in prod (Cloudflare Access).
 	handle /auth/* {
+		# Keycloak admin console and master realm: local access only (never through public hosts).
+		@kcPrivate {
+			path /auth/admin /auth/admin/* /auth/realms/master /auth/realms/master/*
+			not host localhost 127.0.0.1
+		}
+		respond @kcPrivate 404
 		reverse_proxy {$ILVEN_KEYCLOAK_UPSTREAM:keycloak:8080}
 	}
 
