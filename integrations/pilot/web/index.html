@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pilot</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>Pilot</h1><span class="tag">image generation</span>
+    <span class="spacer"></span><span id="who"></span><button id="logout" class="link">Sign out</button>
+  </header>
+  <div id="banner" class="banner" hidden></div>
+  <main>
+    <section class="card">
+      <h2>Your OpenAI key</h2>
+      <p class="muted">Pilot generates images with your own OpenAI API key. It is stored encrypted by Pilot and never shared with Ilven.</p>
+      <p id="keyStatus"></p>
+      <form id="keyForm" class="row">
+        <input id="keyInput" type="password" autocomplete="off" placeholder="sk-..." aria-label="OpenAI API key" />
+        <button>Save key</button>
+        <button type="button" id="keyDelete" class="secondary" hidden>Remove</button>
+      </form>
+    </section>
+    <section class="card">
+      <h2>Generate</h2>
+      <form id="genForm" class="row">
+        <input id="prompt" placeholder="A watercolor fox reading a newspaper" aria-label="Prompt" required />
+        <select id="size" aria-label="Size">
+          <option value="1024x1024">Square</option><option value="1536x1024">Landscape</option><option value="1024x1536">Portrait</option>
+        </select>
+        <button id="genBtn">Generate</button>
+      </form>
+      <p id="genStatus" class="muted"></p>
+    </section>
+    <section>
+      <h2>Gallery</h2>
+      <div id="gallery" class="gallery"></div>
+    </section>
+  </main>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

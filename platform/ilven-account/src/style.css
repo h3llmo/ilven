@@ -1,0 +1,27 @@
+* { box-sizing: border-box; }
+body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: #f6f5fb; color: #1d1b26; }
+.top { display: flex; align-items: center; gap: 12px; padding: 12px 24px; background: #fff; border-bottom: 1px solid #e7e4f2; }
+.top h1 { margin: 0; font-size: 19px; } .spacer { flex: 1; }
+main { max-width: 760px; margin: 0 auto; padding: 24px 16px 100px; display: grid; gap: 16px; }
+.card { background: #fff; border: 1px solid #e7e4f2; border-radius: 12px; padding: 16px 18px; }
+h2 { margin: 0 0 8px; font-size: 16px; } h3 { margin: 12px 0 6px; font-size: 14px; }
+.muted { color: #6b6585; font-size: 13px; margin: 4px 0; }
+label.opt { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid #f0eef6; }
+label.opt:first-of-type { border-top: 0; }
+input, select, textarea { font: inherit; padding: 7px 9px; border: 1px solid #cfc9e4; border-radius: 8px; }
+button { font: inherit; padding: 8px 14px; border: 0; border-radius: 8px; background: #6d4aff; color: #fff; cursor: pointer; }
+button.secondary { background: #ecebf3; color: #333; } button.danger { background: #c33; } button.link { background: none; color: #6d4aff; padding: 0; }
+button:disabled { opacity: .55; cursor: default; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.err { color: #b22; } .ok { color: #2a7a2a; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #efedf5; vertical-align: top; }
+th { color: #6b6585; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+code { background: #f1eff7; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.tabs button { background: none; color: #444; border-radius: 8px; }
+.tabs button.on { background: #ece7ff; color: #4b2fd6; }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 99px; background: #ecebf3; font-size: 12px; }
+.pill.warn { background: #ffe9c7; } .pill.good { background: #d9f3d9; }
+.tools label { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; }
+.tools small { color: #6b6585; display: block; }

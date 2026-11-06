@@ -1,0 +1,9 @@
+{
+  "name": "@ilven/web-auth",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "oidc-client-ts": "3.5.0" }
+}

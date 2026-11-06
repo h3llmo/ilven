@@ -1,0 +1,8 @@
+{
+  "name": "@ilven/ui-plugin",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": { "build": "vite build" },
+  "devDependencies": { "vite": "8.3.6" }
+}

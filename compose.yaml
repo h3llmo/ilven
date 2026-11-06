@@ -1,0 +1,171 @@
+# Ilven platform. Runs with nothing but the right to start Docker: no bind mounts, no docker.sock, no host scripts.
+# Integrations are pulled in below; removing one = removing its line. The platform never depends on them.
+include:
+  - integrations/pilot/compose.yaml
+
+x-hardening: &hardening
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+
+x-auth-env: &auth-env
+  ILVEN_AUTH_MODE: ${ILVEN_AUTH_MODE:-oidc}
+  OIDC_ISSUER: ${ILVEN_OIDC_ISSUER:-}
+  OIDC_JWKS_URL: ${ILVEN_OIDC_JWKS_URL:-}
+  OIDC_AUDIENCE: ilven
+  CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
+  CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
+  ILVEN_ADMIN_EMAILS: ${ILVEN_ADMIN_EMAILS:-}
+
+x-pg: &pg
+  image: postgres:16-alpine
+  restart: unless-stopped
+  security_opt: [no-new-privileges:true]
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+    interval: 3s
+    timeout: 3s
+    retries: 30
+
+x-node-health: &node-health
+  test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+  interval: 5s
+  timeout: 3s
+  retries: 30
+
+services:
+  # Generates every platform secret on first start into a Docker volume. Services mount only the subdirectories they need.
+  secrets-init:
+    image: alpine:3.20
+    restart: "no"
+    network_mode: none
+    volumes: [secrets:/secrets]
+    command:
+      - sh
+      - -euc
+      - |
+        umask 022
+        gen() { d=/secrets/$$1; mkdir -p "$$d"; if [ ! -s "$$d/$$2" ]; then head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$$d/$$2"; echo "generated $$1/$$2"; fi; chmod 0444 "$$d/$$2"; }
+        gen nevli-db password
+        gen dms-db password
+        gen keycloak-db password
+        gen keycloak admin_password
+        gen nevli master_key
+        gen internal token
+        gen ai confirm_key
+
+  gateway:
+    build: { context: ., target: gateway }
+    restart: unless-stopped
+    ports: ["${ILVEN_HTTP_PORT:-8080}:80"]
+    environment:
+      ILVEN_AUTH_MODE: ${ILVEN_AUTH_MODE:-oidc}
+      ILVEN_OIDC_ISSUER: ${ILVEN_OIDC_ISSUER:-}
+      ILVEN_OIDC_CLIENT_ID: ${ILVEN_OIDC_CLIENT_ID:-ilven-web}
+    volumes: [gateway-data:/data, gateway-config:/config]
+
+  nevli-db:
+    <<: *pg
+    environment:
+      POSTGRES_DB: nevli
+      POSTGRES_USER: nevli
+      POSTGRES_PASSWORD_FILE: /run/ilven-secrets/db/password
+    volumes:
+      - nevli-db-data:/var/lib/postgresql/data
+      - { type: volume, source: secrets, target: /run/ilven-secrets/db, read_only: true, volume: { subpath: nevli-db } }
+    networks: [nevli-db]
+    depends_on: { secrets-init: { condition: service_completed_successfully } }
+
+  nevli:
+    <<: *hardening
+    build: { context: ., target: nevli }
+    environment:
+      <<: *auth-env
+      DB_HOST: nevli-db
+      DB_NAME: nevli
+      DB_USER: nevli
+      DB_PASSWORD_FILE: /run/ilven-secrets/db/password
+      NEVLI_MASTER_KEY_FILE: /run/ilven-secrets/nevli/master_key
+      ILVEN_INTERNAL_TOKEN_FILE: /run/ilven-secrets/internal/token
+      COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-ilven}
+    volumes:
+      - { type: volume, source: secrets, target: /run/ilven-secrets/db, read_only: true, volume: { subpath: nevli-db } }
+      - { type: volume, source: secrets, target: /run/ilven-secrets/nevli, read_only: true, volume: { subpath: nevli } }
+      - { type: volume, source: secrets, target: /run/ilven-secrets/internal, read_only: true, volume: { subpath: internal } }
+    networks: [default, nevli-db]
+    healthcheck: *node-health
+    depends_on:
+      secrets-init: { condition: service_completed_successfully }
+      nevli-db: { condition: service_healthy }
+
+  ilven-ai:
+    <<: *hardening
+    build: { context: ., target: ilven-ai }
+    environment:
+      <<: *auth-env
+      NEVLI_INTERNAL_URL: http://nevli:3001
+      ILVEN_INTERNAL_TOKEN_FILE: /run/ilven-secrets/internal/token
+      ILVEN_AI_CONFIRM_KEY_FILE: /run/ilven-secrets/ai/confirm_key
+    volumes:
+      - { type: volume, source: secrets, target: /run/ilven-secrets/internal, read_only: true, volume: { subpath: internal } }
+      - { type: volume, source: secrets, target: /run/ilven-secrets/ai, read_only: true, volume: { subpath: ai } }
+    healthcheck: *node-health
+    depends_on:
+      secrets-init: { condition: service_completed_successfully }
+
+  nevli-dms-db:
+    <<: *pg
+    environment:
+      POSTGRES_DB: dms
+      POSTGRES_USER: dms
+      POSTGRES_PASSWORD_FILE: /run/ilven-secrets/db/password
+    volumes:
+      - dms-db-data:/var/lib/postgresql/data
+      - { type: volume, source: secrets, target: /run/ilven-secrets/db, read_only: true, volume: { subpath: dms-db } }
+    networks: [dms-db]
+    depends_on: { secrets-init: { condition: service_completed_successfully } }
+
+  nevli-dms:
+    <<: *hardening
+    build: { context: ., target: nevli-dms }
+    user: "1000:1000"
+    environment:
+      <<: *auth-env
+      DB_HOST: nevli-dms-db
+      DB_NAME: dms
+      DB_USER: dms
+      DB_PASSWORD_FILE: /run/ilven-secrets/db/password
+      NEVLI_INTERNAL_URL: http://nevli:3001
+      DMS_DATA_DIR: /data
+    volumes:
+      - dms-data:/data
+      - { type: volume, source: secrets, target: /run/ilven-secrets/db, read_only: true, volume: { subpath: dms-db } }
+    networks: [default, dms-db]
+    healthcheck: *node-health
+    depends_on:
+      dms-volume-init: { condition: service_completed_successfully }
+      nevli-dms-db: { condition: service_healthy }
+
+  # Gives the DMS (non-root) ownership of its data volume.
+  dms-volume-init:
+    image: alpine:3.20
+    restart: "no"
+    network_mode: none
+    volumes: [dms-data:/data]
+    command: ["sh", "-c", "chown 1000:1000 /data"]
+
+networks:
+  default: {}
+  nevli-db: { internal: true }
+  dms-db: { internal: true }
+
+volumes:
+  secrets: {}
+  gateway-data: {}
+  gateway-config: {}
+  nevli-db-data: {}
+  dms-db-data: {}
+  dms-data: {}

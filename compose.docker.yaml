@@ -1,0 +1,27 @@
+# OPTIONAL: lets Nevli list/restart this project's containers. Requires the host administrator to grant docker.sock,
+# which is root-equivalent: Nevli only reaches it through a socket proxy with an endpoint allowlist, and filters
+# every call to containers labelled with this compose project.
+services:
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:v0.4.1
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      POST: 1
+      ALLOW_RESTARTS: 1
+      ALLOW_START: 0
+      ALLOW_STOP: 0
+      IMAGES: 0
+      NETWORKS: 0
+      VOLUMES: 0
+      EXEC: 0
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock:ro"]
+    networks: [docker-proxy]
+
+  nevli:
+    environment:
+      DOCKER_HOST: tcp://docker-proxy:2375
+    networks: [default, nevli-db, docker-proxy]
+
+networks:
+  docker-proxy: { internal: true }

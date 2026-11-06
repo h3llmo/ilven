@@ -1,0 +1,17 @@
+{
+  "name": "ilven",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "platform/*", "integrations/*", "tests/*"],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.15",
+    "@types/node": "22.19.1"
+  }
+}

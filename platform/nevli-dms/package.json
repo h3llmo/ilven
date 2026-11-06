@@ -1,0 +1,8 @@
+{
+  "name": "@ilven/nevli-dms",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": { "build": "node ../../scripts/build-service.mjs src/index.ts" },
+  "dependencies": { "@ilven/common": "*", "fastify": "5.12.8", "zod": "4.6.7" }
+}

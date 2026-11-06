@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ilven</title>
+  <style>
+    body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #f6f5fb; color: #1d1b26; }
+    main { max-width: 640px; margin: 10vh auto; padding: 0 16px; }
+    h1 { font-size: 30px; margin: 0 0 4px; } p { color: #6b6585; margin-top: 0; }
+    ul { list-style: none; padding: 0; display: grid; gap: 10px; }
+    a { display: block; padding: 14px 16px; background: #fff; border: 1px solid #e7e4f2; border-radius: 12px; color: inherit; text-decoration: none; }
+    a:hover { border-color: #b9a8ff; } small { color: #6b6585; display: block; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Ilven</h1>
+    <p>Apps on this platform, with an optional assistant.</p>
+    <h2>Apps</h2>
+    <ul id="apps"><li><small>Loading…</small></li></ul>
+    <h2>Platform</h2>
+    <ul>
+      <li><a href="/account/"><strong>Ilven Account</strong><small>Register, profile sharing, your API key</small></a></li>
+      <li><a href="/admin/"><strong>Nevli</strong><small>Administration (admins only)</small></a></li>
+    </ul>
+  </main>
+  <script>
+    fetch("/nevli/api/apps").then((r) => r.json()).then((apps) => {
+      const ul = document.getElementById("apps");
+      ul.replaceChildren(...(apps.length ? apps : [{ name: "No apps registered yet", baseUrl: null }]).map((a) => {
+        const li = document.createElement("li");
+        if (a.baseUrl) { const l = document.createElement("a"); l.href = a.baseUrl; l.textContent = a.name; li.append(l); }
+        else { const s = document.createElement("small"); s.textContent = a.name; li.append(s); }
+        return li;
+      }));
+    }).catch(() => {});
+  </script>
+</body>
+</html>

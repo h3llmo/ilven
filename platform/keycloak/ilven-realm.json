@@ -1,0 +1,126 @@
+{
+  "realm": "ilven",
+  "enabled": true,
+  "displayName": "Ilven (dev)",
+  "registrationAllowed": true,
+  "loginWithEmailAllowed": true,
+  "resetPasswordAllowed": false,
+  "sslRequired": "none",
+  "accessTokenLifespan": 900,
+  "roles": {
+    "realm": [
+      {
+        "name": "ilven-admin",
+        "description": "Ilven platform administrator (Nevli-Web)"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "ilven-web",
+      "name": "Ilven web front-ends",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "redirectUris": [
+        "${ILVEN_PUBLIC_URL}/*"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "${ILVEN_PUBLIC_URL}/*"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "roles",
+        "web-origins"
+      ],
+      "optionalClientScopes": [
+        "email"
+      ],
+      "protocolMappers": [
+        {
+          "name": "ilven-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "ilven",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "ilven-e2e",
+      "name": "Dev-only client for automated end-to-end tests (password grant)",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "roles"
+      ],
+      "protocolMappers": [
+        {
+          "name": "ilven-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "ilven",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "email": "admin@ilven.local",
+      "emailVerified": true,
+      "firstName": "Ada",
+      "lastName": "Admin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-ilven",
+        "ilven-admin"
+      ]
+    },
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@ilven.local",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-ilven"
+      ]
+    }
+  ]
+}

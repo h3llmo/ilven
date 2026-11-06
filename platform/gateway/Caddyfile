@@ -1,0 +1,73 @@
+{
+	admin off
+	auto_https off
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+:80 {
+	encode zstd gzip
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options SAMEORIGIN
+		-Server
+	}
+
+	# Runtime config for the front-ends (no secrets).
+	handle /ilven-config.json {
+		header Content-Type application/json
+		header Cache-Control no-store
+		respond `{"authMode":"{$ILVEN_AUTH_MODE:oidc}","issuer":"{$ILVEN_OIDC_ISSUER}","clientId":"{$ILVEN_OIDC_CLIENT_ID:ilven-web}"}` 200
+	}
+
+	# Dev identity provider (Keycloak, compose.dev.yaml). Absent in prod (Cloudflare Access).
+	handle /auth/* {
+		reverse_proxy {$ILVEN_KEYCLOAK_UPSTREAM:keycloak:8080}
+	}
+
+	handle /nevli/api/* {
+		reverse_proxy nevli:3000
+	}
+	handle /ai/api/* {
+		reverse_proxy ilven-ai:3000
+	}
+	handle /dms/api/* {
+		request_body {
+			max_size 30MB
+		}
+		reverse_proxy nevli-dms:3000
+	}
+
+	# Apps: /apps/<name>/* → container reachable as "app-<name>:8080". Only containers that opt in
+	# with that network alias are reachable, so the gateway never needs to know about any specific app.
+	@app path_regexp app ^/apps/([a-z0-9][a-z0-9-]{0,30})(/.*)?$
+	handle @app {
+		reverse_proxy app-{re.app.1}:8080
+	}
+
+	# Platform front-ends (static).
+	redir /admin /admin/
+	redir /account /account/
+	handle /admin/* {
+		root * /srv
+		try_files {path} /admin/index.html
+		file_server
+	}
+	handle /account/* {
+		root * /srv
+		try_files {path} /account/index.html
+		file_server
+	}
+	handle /plugin/* {
+		root * /srv
+		header Cache-Control "no-cache"
+		file_server
+	}
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

@@ -1,0 +1,81 @@
+# Pilot: spike app (prompt → image via the user's own OpenAI key → stored in Nevli-DMS).
+# An integration: it reaches the platform only through its public/internal APIs and registers itself with Nevli.
+services:
+  pilot-secrets-init:
+    image: alpine:3.20
+    restart: "no"
+    network_mode: none
+    volumes: [pilot-secrets:/secrets]
+    command:
+      - sh
+      - -euc
+      - |
+        umask 022
+        gen() { d=/secrets/$$1; mkdir -p "$$d"; if [ ! -s "$$d/$$2" ]; then head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$$d/$$2"; fi; chmod 0444 "$$d/$$2"; }
+        gen db password
+        gen app master_key
+        gen app ilven_app_secret
+
+  pilot-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    environment:
+      POSTGRES_DB: pilot
+      POSTGRES_USER: pilot
+      POSTGRES_PASSWORD_FILE: /run/pilot-secrets/db/password
+    volumes:
+      - pilot-db-data:/var/lib/postgresql/data
+      - { type: volume, source: pilot-secrets, target: /run/pilot-secrets/db, read_only: true, volume: { subpath: db } }
+    networks: [pilot-db]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pilot -d pilot"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on: { pilot-secrets-init: { condition: service_completed_successfully } }
+
+  pilot:
+    build: { context: ../.., dockerfile: integrations/pilot/Dockerfile }
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    environment:
+      ILVEN_AUTH_MODE: ${ILVEN_AUTH_MODE:-oidc}
+      OIDC_ISSUER: ${ILVEN_OIDC_ISSUER:-}
+      OIDC_JWKS_URL: ${ILVEN_OIDC_JWKS_URL:-}
+      OIDC_AUDIENCE: ilven
+      CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
+      CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
+      DB_HOST: pilot-db
+      DB_NAME: pilot
+      DB_USER: pilot
+      DB_PASSWORD_FILE: /run/pilot-secrets/db/password
+      PILOT_MASTER_KEY_FILE: /run/pilot-secrets/app/master_key
+      PILOT_APP_SECRET_FILE: /run/pilot-secrets/app/ilven_app_secret
+      NEVLI_INTERNAL_URL: http://nevli:3001
+      DMS_URL: http://nevli-dms:3000
+      PILOT_MCP_URL: http://app-pilot:8081/mcp
+    volumes:
+      - { type: volume, source: pilot-secrets, target: /run/pilot-secrets/db, read_only: true, volume: { subpath: db } }
+      - { type: volume, source: pilot-secrets, target: /run/pilot-secrets/app, read_only: true, volume: { subpath: app } }
+    networks:
+      default: { aliases: [app-pilot] }
+      pilot-db: {}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      pilot-db: { condition: service_healthy }
+
+networks:
+  pilot-db: { internal: true }
+
+volumes:
+  pilot-secrets: {}
+  pilot-db-data: {}

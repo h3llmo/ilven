@@ -1,0 +1,65 @@
+# Dev overlay: Keycloak as the identity provider (realm "ilven" imported on start, with dev users admin/admin and alice/alice).
+services:
+  keycloak-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD_FILE: /run/ilven-secrets/db/password
+    volumes:
+      - keycloak-db-data:/var/lib/postgresql/data
+      - { type: volume, source: secrets, target: /run/ilven-secrets/db, read_only: true, volume: { subpath: keycloak-db } }
+    networks: [keycloak-db]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on: { secrets-init: { condition: service_completed_successfully } }
+
+  keycloak:
+    build: { context: platform/keycloak }
+    restart: unless-stopped
+    command: ["start-dev", "--import-realm"]
+    environment:
+      ILVEN_PUBLIC_URL: ${ILVEN_PUBLIC_URL:-http://localhost:8080}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_HOSTNAME: ${ILVEN_PUBLIC_URL:-http://localhost:8080}/auth
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: kcadmin
+    volumes:
+      - { type: volume, source: secrets, target: /run/ilven-secrets/db, read_only: true, volume: { subpath: keycloak-db } }
+      - { type: volume, source: secrets, target: /run/ilven-secrets/keycloak, read_only: true, volume: { subpath: keycloak } }
+    networks: [default, keycloak-db]
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /auth/health/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 20s
+    depends_on:
+      keycloak-db: { condition: service_healthy }
+
+  # End-to-end tests against the running stack: docker compose --profile test run --rm e2e
+  e2e:
+    profiles: [test]
+    build: { context: ., dockerfile: tests/e2e/Dockerfile }
+    environment:
+      BASE_URL: http://gateway
+      KEYCLOAK_TOKEN_URL: http://keycloak:8080/auth/realms/ilven/protocol/openid-connect/token
+      NEVLI_INTERNAL_URL: http://nevli:3001
+      E2E_ANTHROPIC_API_KEY: ${E2E_ANTHROPIC_API_KEY:-}
+      E2E_OPENAI_API_KEY: ${E2E_OPENAI_API_KEY:-}
+
+networks:
+  keycloak-db: { internal: true }
+
+volumes:
+  keycloak-db-data: {}
