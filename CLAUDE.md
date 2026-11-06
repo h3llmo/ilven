@@ -277,7 +277,8 @@ e2e suite: gateway, auth rejection, criterion 1 (register → empty default pres
 provider keys never returned, MCP tool discovery, REST/MCP parity, DMS per-user isolation, Pilot usable without
 AI, preset resolution from shared profile data. Unit tests cover scope enforcement with the real AI SDK loop
 (out-of-preset calls never executed) and destructive-action confirmation.
-- Not yet verified: criteria 2 and 3 against a real LLM and OpenAI (e2e test exists, runs when
+- Criteria 2 and 3 verified manually with a real LLM and OpenAI (generate, list, confirmed delete in Pilot).
+- Not yet verified in e2e: criteria 2 and 3 against a real LLM and OpenAI (e2e test exists, runs when
   `E2E_ANTHROPIC_API_KEY` / `E2E_OPENAI_API_KEY` are set); UIs not clicked through in a browser;
   `compose.docker.yaml` and Cloudflare Access mode untested.
 - No rate limiting yet; conversations are stateless (the plugin sends the history each turn).
@@ -305,6 +306,12 @@ passwords. The gateway waits for that job before serving. The admin console and 
    is empty too: allow tools in Nevli-Web before using the Nevli assistant.
 8. API key verification by apps is cached for 30 s (revocation can lag by up to 30 s).
 9. Default AI models: Anthropic `claude-opus-5-5`, OpenAI `gpt-5`, Google `gemini-2.5-pro` (editable in Nevli-Web).
+10. **Conversation scope (per preset):** `actions` (default: only requests the preset's tools can fulfil), `app`
+    (also questions about the app, guided by the preset's `topics` text) or `open` (general assistant). For
+    `actions`/`app`, a cheap guard model (per provider, default `claude-haiku-5-5` / `gpt-5-mini` /
+    `gemini-2.5-flash`) classifies the conversation before the main model runs; anything but `ALLOW` is refused
+    with a fixed message (fail closed). The system prompt repeats the scope as a second layer. Verified on the
+    real model (off-topic "digits of PI" refused in Pilot, 2026-11-06).
 
 ## 13. Rules for agents working on this repo
 - Never add host-side scripts, bind mounts, or anything requiring host permissions beyond starting Docker.

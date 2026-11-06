@@ -62,8 +62,8 @@ export function registerInternalApi(app: FastifyInstance, ctx: Ctx, internalToke
     const { sub, appId, peek } = z.object({ sub: z.string().min(1), appId: z.string().min(1), peek: z.boolean().default(false) }).parse(req.body);
     const user = await userBySub(ctx, sub);
     if (!user) return { status: "not_registered" };
-    const { rows } = await ctx.db.query<{ app_name: string; mcp_url: string; api_key_id: string | null; preset_id: string | null; preset_name: string | null; tools: string[] | null; rules: string | null }>(
-      `SELECT a.name AS app_name, a.mcp_url, c.api_key_id, p.id AS preset_id, p.name AS preset_name, p.tools, p.rules
+    const { rows } = await ctx.db.query<{ app_name: string; mcp_url: string; api_key_id: string | null; preset_id: string | null; preset_name: string | null; tools: string[] | null; rules: string | null; conversation: string | null; topics: string | null }>(
+      `SELECT a.name AS app_name, a.mcp_url, c.api_key_id, p.id AS preset_id, p.name AS preset_name, p.tools, p.rules, p.conversation, p.topics
        FROM connexes c JOIN apps a ON a.id = c.app_id LEFT JOIN presets p ON p.id = c.preset_id
        WHERE c.user_id = $1 AND c.app_id = $2`,
       [user.id, appId],
@@ -74,7 +74,7 @@ export function registerInternalApi(app: FastifyInstance, ctx: Ctx, internalToke
     // peek: status only, nothing is unsealed.
     if (peek) {
       if (!(await aiEnabled(ctx))) return { status: "ai_disabled" };
-      return { status: "ok", app: { id: appId, name: c.app_name }, preset: { id: c.preset_id, name: c.preset_name ?? "Default", tools, rules: "" } };
+      return { status: "ok", app: { id: appId, name: c.app_name }, preset: { id: c.preset_id, name: c.preset_name ?? "Default", tools, rules: "", conversation: c.conversation ?? "actions", topics: "" } };
     }
     const provider = await activeProvider(ctx);
     if (!provider) return { status: "ai_disabled" };
@@ -84,7 +84,7 @@ export function registerInternalApi(app: FastifyInstance, ctx: Ctx, internalToke
     return {
       status: "ok",
       app: { id: appId, name: c.app_name },
-      preset: { id: c.preset_id, name: c.preset_name ?? "Default", tools, rules: c.rules ?? "" },
+      preset: { id: c.preset_id, name: c.preset_name ?? "Default", tools, rules: c.rules ?? "", conversation: c.conversation ?? "actions", topics: c.topics ?? "" },
       mcpUrl: c.mcp_url,
       apiKey,
       provider,

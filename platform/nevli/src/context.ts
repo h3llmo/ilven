@@ -17,3 +17,6 @@ export interface Actor {
 
 export const GENDERS = ["female", "male", "non_binary", "other"] as const;
 export type Gender = (typeof GENDERS)[number];
+
+export const CONVERSATION_SCOPES = ["actions", "app", "open"] as const;
+export type ConversationScope = (typeof CONVERSATION_SCOPES)[number];

@@ -12,6 +12,24 @@
 type Msg = { role: "user" | "assistant"; content: string };
 type Action = { tool: string; ok: boolean; result?: unknown; error?: string };
 
+/** Minimal, safe markdown: everything is HTML-escaped first; only bold, italics, inline code, lists and line breaks are rendered. */
+export function renderMarkdown(text: string): string {
+  const esc = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  const inline = (t: string) =>
+    t.replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>").replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  const out: string[] = [];
+  let list: string[] = [];
+  const flush = () => { if (list.length) { out.push(`<ul>${list.map((i) => `<li>${inline(i)}</li>`).join("")}</ul>`); list = []; } };
+  for (const line of esc.split("\n")) {
+    const m = /^\s*(?:[-*•]|\d+[.)])\s+(.*)$/.exec(line);
+    if (m) { list.push(m[1]); continue; }
+    flush();
+    out.push(line.trim() ? `<p>${inline(line)}</p>` : "");
+  }
+  flush();
+  return out.filter(Boolean).join("");
+}
+
 const ICON = `<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M12 2l1.9 5.6L19.5 9.5l-5.6 1.9L12 17l-1.9-5.6L4.5 9.5l5.6-1.9zM19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9zM5 15l.7 1.8 1.8.7-1.8.7L5 20l-.7-1.8-1.8-.7 1.8-.7z"/></svg>`;
 
 const CSS = `
@@ -27,7 +45,10 @@ header button { border: 0; background: none; font-size: 18px; color: #6b6585; }
 .log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .m { max-width: 85%; padding: 8px 11px; border-radius: 12px; white-space: pre-wrap; word-wrap: break-word; }
 .m.user { align-self: flex-end; background: #6d4aff; color: #fff; border-bottom-right-radius: 4px; }
-.m.assistant { align-self: flex-start; background: #f1eff7; border-bottom-left-radius: 4px; }
+.m.assistant { align-self: flex-start; background: #f1eff7; border-bottom-left-radius: 4px; white-space: normal; }
+.m.assistant p { margin: 0 0 6px; } .m.assistant p:last-child { margin-bottom: 0; }
+.m.assistant ul { margin: 4px 0 6px; padding-left: 18px; }
+.m.assistant code { background: #e4e0f0; padding: 0 4px; border-radius: 4px; font-size: 12px; }
 .m.note { align-self: center; background: none; color: #6b6585; font-size: 12px; text-align: center; }
 .m a { color: inherit; }
 .act { font-size: 12px; color: #4a7b4a; } .act.bad { color: #a33; }
@@ -89,7 +110,8 @@ export class IlvenAssistant extends HTMLElement {
       const s = await res.json();
       if (s.status === "ok") {
         this.els.sub.textContent = s.preset?.name ? `scope: ${s.preset.name}` : "";
-        this.note(s.preset?.allowedTools ? "Ask me to do things in this app." : "No actions are enabled for you in this app yet.");
+        const c = s.preset?.conversation;
+        this.note(s.preset?.allowedTools ? "Ask me to do things in this app." : c && c !== "actions" ? "Ask me about this app." : "No actions are enabled for you in this app yet.");
       } else if (s.status === "not_registered") {
         this.note(s.message, { href: `/account/?return=${encodeURIComponent(location.href)}`, label: "Register with Ilven" });
       } else this.note(s.message ?? "The assistant is unavailable.");
@@ -101,7 +123,8 @@ export class IlvenAssistant extends HTMLElement {
   private add(role: string, text: string) {
     const d = document.createElement("div");
     d.className = `m ${role}`;
-    d.textContent = text;
+    if (role === "assistant") d.innerHTML = renderMarkdown(text); // escaped first, see renderMarkdown
+    else d.textContent = text;
     this.els.log.append(d);
     this.els.log.scrollTop = this.els.log.scrollHeight;
     return d;

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { forbidden } from "@ilven/common";
-import { GENDERS, type Actor, type Ctx } from "./context.ts";
+import { CONVERSATION_SCOPES, GENDERS, type Actor, type Ctx } from "./context.ts";
 import { listApps, refreshTools } from "./services/apps.ts";
 import { listConnexes, syncConnexes } from "./services/connexes.ts";
 import { listServices, restartService } from "./services/docker.ts";
@@ -34,6 +34,8 @@ const appId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/).describe("App id, e.
 const toolNames = z.array(z.string().min(1).max(128)).max(200);
 const gender = z.enum(GENDERS);
 const provider = z.enum(PROVIDERS);
+const conversation = z.enum(CONVERSATION_SCOPES).describe("What Ilven-AI may talk about: 'actions' = only requests the allowed tools serve (default); 'app' = also questions about the app and the topics; 'open' = general assistant");
+const topics = z.string().max(4000).describe("For 'app' scope: what the app is about and which questions the assistant may answer");
 
 export const ops: Op[] = [
   // Users, plans, API keys
@@ -64,13 +66,13 @@ export const ops: Op[] = [
   op({
     name: "create_preset", title: "Create preset", description: "Create a preset for an app. New presets allow nothing unless tools are listed.",
     method: "POST", path: "/apps/:appId/presets",
-    input: { appId, name: z.string().min(1).max(80), tools: toolNames.default([]), rules: z.string().max(10_000).default("") },
+    input: { appId, name: z.string().min(1).max(80), tools: toolNames.default([]), rules: z.string().max(10_000).default(""), conversation: conversation.default("actions"), topics: topics.default("") },
     run: (ctx, i) => createPreset(ctx, i.appId, i),
   }),
   op({
-    name: "update_preset", title: "Update preset", description: "Change a preset's name, allowed tools (replaces the whole list) or rules. Affected connexes are updated immediately.",
+    name: "update_preset", title: "Update preset", description: "Change a preset's name, allowed tools (replaces the whole list), rules, conversation scope or topics. Affected connexes are updated immediately.",
     method: "PATCH", path: "/presets/:presetId",
-    input: { presetId: uuid, name: z.string().min(1).max(80).optional(), tools: toolNames.optional(), rules: z.string().max(10_000).optional() },
+    input: { presetId: uuid, name: z.string().min(1).max(80).optional(), tools: toolNames.optional(), rules: z.string().max(10_000).optional(), conversation: conversation.optional(), topics: topics.optional() },
     run: (ctx, i) => updatePreset(ctx, i.presetId, i),
   }),
   op({ name: "delete_preset", title: "Delete preset", description: "Delete a non-default preset and its criteria. Users fall back to other criteria or the default preset.", method: "DELETE", path: "/presets/:presetId", input: { presetId: uuid }, destructive: true, run: (ctx, i) => deletePreset(ctx, i.presetId) }),
@@ -99,8 +101,8 @@ export const ops: Op[] = [
     mcp: false, run: async (ctx, i) => { await setProviderKey(ctx, i.provider, i.apiKey, i.model); return { ok: true }; },
   }),
   op({
-    name: "update_ai_provider", title: "Update AI provider", description: "Change an AI provider's model, enabled flag or priority (lower = preferred).",
-    method: "PATCH", path: "/ai-providers/:provider", input: { provider, model: z.string().min(1).max(100).optional(), enabled: z.boolean().optional(), priority: z.int().min(0).max(1000).optional() },
+    name: "update_ai_provider", title: "Update AI provider", description: "Change an AI provider's main model, guard model (small model for the scope check), enabled flag or priority (lower = preferred).",
+    method: "PATCH", path: "/ai-providers/:provider", input: { provider, model: z.string().min(1).max(100).optional(), guardModel: z.string().min(1).max(100).optional(), enabled: z.boolean().optional(), priority: z.int().min(0).max(1000).optional() },
     run: async (ctx, i) => { await updateProvider(ctx, i.provider, i); return { ok: true }; },
   }),
   op({ name: "delete_ai_provider", title: "Delete AI provider", description: "Delete an AI provider key. If none remain, Ilven-AI is disabled.", method: "DELETE", path: "/ai-providers/:provider", input: { provider }, destructive: true, run: async (ctx, i) => { await deleteProvider(ctx, i.provider); return { ok: true }; } }),

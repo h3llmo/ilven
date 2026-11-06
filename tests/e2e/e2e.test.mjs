@@ -103,6 +103,8 @@ test("criterion 1: login → register → connex with empty default preset → I
   const connexes = (await call(alice, "GET", "/nevli/api/me/connexes")).data;
   const pilot = connexes.find((c) => c.appId === "pilot");
   assert.ok(pilot, "pilot connex created");
+  const presets = (await call(admin, "GET", "/nevli/api/admin/apps/pilot/presets")).data;
+  assert.equal(presets.find((p) => p.isDefault).conversation, "actions", "safe-by-default conversation scope");
   assert.equal(pilot.presetName, "Default");
   assert.equal(pilot.allowedToolCount, 0);
   assert.ok(!connexes.some((c) => c.appId === "nevli"), "non-admins get no Nevli connex");
@@ -195,6 +197,11 @@ test("criteria 2 & 3 with a real model: allowed tools work, others are refused",
   const del = await call(alice, "POST", "/ai/api/chat", { app: "pilot", messages: [{ role: "user", content: "Delete all my images now." }] });
   assert.ok(!del.data.actions.some((a) => a.tool === "delete_image"), JSON.stringify(del.data));
   assert.ok(del.data.reply.length > 0);
+
+  // Out of scope conversation: refused by the guard in an 'actions' preset.
+  const pi = await call(alice, "POST", "/ai/api/chat", { app: "pilot", messages: [{ role: "user", content: "What are the first 20 digits of pi?" }] });
+  assert.equal(pi.data.refused, "out_of_scope", JSON.stringify(pi.data));
+  assert.ok(!/14159/.test(pi.data.reply), "no answer leaked");
 
   if (OPENAI_KEY) {
     await call(alice, "PUT", "/apps/pilot/api/settings/openai-key", { apiKey: OPENAI_KEY });

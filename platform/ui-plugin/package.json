@@ -3,6 +3,11 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
-  "scripts": { "build": "vite build" },
-  "devDependencies": { "vite": "8.3.6" }
+  "scripts": {
+    "build": "vite build",
+    "test": "tsx --test src/*.test.ts"
+  },
+  "devDependencies": {
+    "vite": "8.3.6"
+  }
 }

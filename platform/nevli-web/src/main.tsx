@@ -5,11 +5,12 @@ import "./style.css";
 
 type Tool = { name: string; title?: string; description?: string; annotations?: { destructiveHint?: boolean; readOnlyHint?: boolean } };
 type App = { id: string; name: string; kind: string; tools: Tool[]; toolsError: string | null; toolsRefreshedAt: string | null };
-type Preset = { id: string; name: string; isDefault: boolean; tools: string[]; rules: string };
+type Scope = "actions" | "app" | "open";
+type Preset = { id: string; name: string; isDefault: boolean; tools: string[]; rules: string; conversation: Scope; topics: string };
 type Criterion = { id: string; presetId: string; presetName: string; priority: number; minAge: number | null; maxAge: number | null; gender: string | null };
 type User = { id: string; sub: string; isAdmin: boolean; planId: string; profile: { birthYear: number | null; gender: string | null }; apiKey: { prefix: string } | null; createdAt: string };
 type Connex = { id: string; sub: string; appName: string; presetName: string | null; allowedToolCount: number; hasApiKey: boolean; updatedAt: string };
-type Provider = { id: string; configured: boolean; model: string; enabled: boolean; priority: number | null };
+type Provider = { id: string; configured: boolean; model: string; guardModel: string; enabled: boolean; priority: number | null };
 type Service = { service: string; container: string; state: string; status: string };
 
 const A = "/nevli/api/admin";
@@ -28,8 +29,10 @@ function PresetEditor({ app, preset, onChange }: { app: App; preset: Preset; onC
   const [tools, setTools] = useState(new Set(preset.tools));
   const [rules, setRules] = useState(preset.rules);
   const [name, setName] = useState(preset.name);
+  const [conversation, setConversation] = useState<Scope>(preset.conversation);
+  const [topics, setTopics] = useState(preset.topics);
   const [msg, setMsg] = useState("");
-  const dirty = name !== preset.name || rules !== preset.rules || tools.size !== preset.tools.length || preset.tools.some((t) => !tools.has(t));
+  const dirty = name !== preset.name || rules !== preset.rules || conversation !== preset.conversation || topics !== preset.topics || tools.size !== preset.tools.length || preset.tools.some((t) => !tools.has(t));
   const stale = preset.tools.filter((t) => !app.tools.some((x) => x.name === t));
   return (
     <div className="card">
@@ -49,11 +52,21 @@ function PresetEditor({ app, preset, onChange }: { app: App; preset: Preset; onC
         ))}
         {stale.length > 0 && <p className="muted">Allowed but no longer offered by the app: {stale.join(", ")}</p>}
       </div>
+      <h3>Conversation scope</h3>
+      <select value={conversation} onChange={(e) => setConversation(e.target.value as Scope)} aria-label="Conversation scope">
+        <option value="actions">Actions only: requests the allowed tools can serve</option>
+        <option value="app">App: also questions about this app and the topics below</option>
+        <option value="open">Open: general assistant (uses your AI key for anything)</option>
+      </select>
+      {conversation !== "open" && <p className="muted">Every message is checked by the guard model first; anything out of scope is refused before the main model runs.</p>}
+      {conversation === "app" && (
+        <textarea value={topics} onChange={(e) => setTopics(e.target.value)} rows={2} style={{ width: "100%" }} placeholder="e.g. Pilot generates images from prompts; questions about prompts, sizes and styles." aria-label="Topics" />
+      )}
       <h3>Rules for Ilven-AI</h3>
       <textarea value={rules} onChange={(e) => setRules(e.target.value)} rows={3} style={{ width: "100%" }} placeholder="e.g. Never generate more than one image per request." />
       <div className="row">
         <button disabled={!dirty} onClick={async () => {
-          try { await call("PATCH", `/presets/${preset.id}`, { name: preset.isDefault ? undefined : name, tools: [...tools], rules }); setMsg("Saved."); onChange(); } catch (e) { setMsg((e as Error).message); }
+          try { await call("PATCH", `/presets/${preset.id}`, { name: preset.isDefault ? undefined : name, tools: [...tools], rules, conversation, topics }); setMsg("Saved."); onChange(); } catch (e) { setMsg((e as Error).message); }
         }}>Save</button>
         {!preset.isDefault && <button className="danger" onClick={async () => { if (confirm(`Delete preset "${preset.name}"?`)) { await call("DELETE", `/presets/${preset.id}`); onChange(); } }}>Delete</button>}
         <span className="ok">{msg}</span>
@@ -160,17 +173,19 @@ function Connexes() {
 function ProviderRow({ p, reload }: { p: Provider; reload: () => void }) {
   const [key, setKey] = useState("");
   const [model, setModel] = useState(p.model);
+  const [guardModel, setGuardModel] = useState(p.guardModel);
   return (
     <tr>
       <td><strong>{p.id}</strong></td>
       <td>{p.configured ? <span className="pill good">key stored</span> : <span className="pill">not configured</span>}</td>
       <td><input value={model} onChange={(e) => setModel(e.target.value)} aria-label={`${p.id} model`} /></td>
+      <td><input value={guardModel} onChange={(e) => setGuardModel(e.target.value)} aria-label={`${p.id} guard model`} /></td>
       <td><input type="password" autoComplete="off" placeholder={p.configured ? "replace key…" : "API key"} value={key} onChange={(e) => setKey(e.target.value)} aria-label={`${p.id} key`} /></td>
       <td className="row">
-        <button disabled={!key && (!p.configured || model === p.model)} onClick={async () => {
+        <button disabled={!key && (!p.configured || (model === p.model && guardModel === p.guardModel))} onClick={async () => {
           try {
             if (key) await call("PUT", `/ai-providers/${p.id}/key`, { apiKey: key, model });
-            else await call("PATCH", `/ai-providers/${p.id}`, { model });
+            if (p.configured || key) await call("PATCH", `/ai-providers/${p.id}`, { model, guardModel });
             setKey(""); reload();
           } catch (e) { alert((e as Error).message); }
         }}>Save</button>
@@ -189,8 +204,8 @@ function Providers() {
       <p>Ilven-AI is <strong>{on ? "enabled" : "disabled"}</strong>. {on ? "The first enabled provider by priority is used." : "Add at least one provider key to enable it. Apps keep working without it."}</p>
       <p className="muted">Keys are encrypted by Nevli and never shown again, logged or given to the model.</p>
       {err && <p className="err">{err}</p>}
-      <table><thead><tr><th>Provider</th><th>Status</th><th>Model</th><th>Key</th><th /></tr></thead>
-        <tbody>{data?.map((p) => <ProviderRow key={p.id + p.configured + p.enabled + p.model} p={p} reload={reload} />)}</tbody>
+      <table><thead><tr><th>Provider</th><th>Status</th><th>Model</th><th>Guard model</th><th>Key</th><th /></tr></thead>
+        <tbody>{data?.map((p) => <ProviderRow key={p.id + p.configured + p.enabled + p.model + p.guardModel} p={p} reload={reload} />)}</tbody>
       </table>
     </div>
   );

@@ -93,4 +93,15 @@ CREATE TABLE ai_providers (
 );
 `,
   },
+  {
+    id: "002_conversation_scope",
+    sql: `
+-- What Ilven-AI may talk about, per preset. 'actions' (default, safe): only what the allowed tools serve;
+-- 'app': also questions about the app and the preset's topics; 'open': general assistant.
+ALTER TABLE presets ADD COLUMN conversation text NOT NULL DEFAULT 'actions' CHECK (conversation IN ('actions', 'app', 'open'));
+ALTER TABLE presets ADD COLUMN topics text NOT NULL DEFAULT '';
+-- Small model used for the per-message scope check.
+ALTER TABLE ai_providers ADD COLUMN guard_model text;
+`,
+  },
 ];

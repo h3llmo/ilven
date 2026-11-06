@@ -1,8 +1,9 @@
 import { badRequest, conflict, notFound } from "@ilven/common";
-import type { Ctx, Gender } from "../context.ts";
+import type { ConversationScope, Ctx, Gender } from "../context.ts";
 import { syncConnexes } from "./connexes.ts";
 
-const COLS = `id, app_id AS "appId", name, is_default AS "isDefault", tools, rules, updated_at AS "updatedAt"`;
+const COLS = `id, app_id AS "appId", name, is_default AS "isDefault", tools, rules, conversation, topics, updated_at AS "updatedAt"`;
+type PresetInput = { name?: string; tools?: string[]; rules?: string; conversation?: ConversationScope; topics?: string };
 
 async function appExists(ctx: Ctx, appId: string) {
   if (!(await ctx.db.query("SELECT 1 FROM apps WHERE id = $1", [appId])).rowCount) throw notFound("App not found");
@@ -16,13 +17,16 @@ export async function listPresets(ctx: Ctx, appId: string) {
 export async function getPreset(ctx: Ctx, presetId: string) {
   const p = (await ctx.db.query(`SELECT ${COLS} FROM presets WHERE id = $1`, [presetId])).rows[0];
   if (!p) throw notFound("Preset not found");
-  return p as { id: string; appId: string; name: string; isDefault: boolean; tools: string[]; rules: string };
+  return p as { id: string; appId: string; name: string; isDefault: boolean; tools: string[]; rules: string; conversation: ConversationScope; topics: string };
 }
 
-export async function createPreset(ctx: Ctx, appId: string, p: { name: string; tools: string[]; rules: string }) {
+export async function createPreset(ctx: Ctx, appId: string, p: { name: string; tools: string[]; rules: string; conversation: ConversationScope; topics: string }) {
   await appExists(ctx, appId);
   try {
-    const { rows } = await ctx.db.query(`INSERT INTO presets (app_id, name, tools, rules) VALUES ($1, $2, $3, $4) RETURNING ${COLS}`, [appId, p.name, dedupe(p.tools), p.rules]);
+    const { rows } = await ctx.db.query(
+      `INSERT INTO presets (app_id, name, tools, rules, conversation, topics) VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${COLS}`,
+      [appId, p.name, dedupe(p.tools), p.rules, p.conversation, p.topics],
+    );
     return rows[0];
   } catch (e) {
     if ((e as { code?: string }).code === "23505") throw conflict("A preset with this name already exists for this app");
@@ -30,11 +34,12 @@ export async function createPreset(ctx: Ctx, appId: string, p: { name: string; t
   }
 }
 
-export async function updatePreset(ctx: Ctx, presetId: string, p: { name?: string; tools?: string[]; rules?: string }) {
+export async function updatePreset(ctx: Ctx, presetId: string, p: PresetInput) {
   const cur = await getPreset(ctx, presetId);
   const { rows } = await ctx.db.query(
-    `UPDATE presets SET name = COALESCE($2, name), tools = COALESCE($3, tools), rules = COALESCE($4, rules), updated_at = now() WHERE id = $1 RETURNING ${COLS}`,
-    [presetId, p.name ?? null, p.tools ? dedupe(p.tools) : null, p.rules ?? null],
+    `UPDATE presets SET name = COALESCE($2, name), tools = COALESCE($3, tools), rules = COALESCE($4, rules),
+       conversation = COALESCE($5, conversation), topics = COALESCE($6, topics), updated_at = now() WHERE id = $1 RETURNING ${COLS}`,
+    [presetId, p.name ?? null, p.tools ? dedupe(p.tools) : null, p.rules ?? null, p.conversation ?? null, p.topics ?? null],
   );
   await syncConnexes(ctx, { appId: cur.appId });
   return rows[0];

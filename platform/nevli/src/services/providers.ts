@@ -10,17 +10,24 @@ export const DEFAULT_MODELS: Record<ProviderId, string> = {
   google: "gemini-2.5-pro",
 };
 
+/** Small, fast models for the per-message conversation-scope check. */
+export const DEFAULT_GUARD_MODELS: Record<ProviderId, string> = {
+  anthropic: "claude-haiku-5-5",
+  openai: "gpt-5-mini",
+  google: "gemini-2.5-flash",
+};
+
 /** Lists configured providers. The key itself is never returned (§6). */
 export async function listProviders(ctx: Ctx) {
-  const { rows } = await ctx.db.query<{ id: ProviderId; model: string; enabled: boolean; priority: number; updated_at: Date }>(
-    "SELECT id, model, enabled, priority, updated_at FROM ai_providers ORDER BY priority, id",
+  const { rows } = await ctx.db.query<{ id: ProviderId; model: string; guard_model: string | null; enabled: boolean; priority: number; updated_at: Date }>(
+    "SELECT id, model, guard_model, enabled, priority, updated_at FROM ai_providers ORDER BY priority, id",
   );
   const byId = new Map(rows.map((r) => [r.id, r]));
   return PROVIDERS.map((id) => {
     const r = byId.get(id);
     return r
-      ? { id, configured: true, model: r.model, enabled: r.enabled, priority: r.priority, updatedAt: r.updated_at }
-      : { id, configured: false, model: DEFAULT_MODELS[id], enabled: false, priority: null, updatedAt: null };
+      ? { id, configured: true, model: r.model, guardModel: r.guard_model ?? DEFAULT_GUARD_MODELS[id], enabled: r.enabled, priority: r.priority, updatedAt: r.updated_at }
+      : { id, configured: false, model: DEFAULT_MODELS[id], guardModel: DEFAULT_GUARD_MODELS[id], enabled: false, priority: null, updatedAt: null };
   });
 }
 
@@ -32,10 +39,11 @@ export async function setProviderKey(ctx: Ctx, id: ProviderId, apiKey: string, m
   );
 }
 
-export async function updateProvider(ctx: Ctx, id: ProviderId, p: { model?: string; enabled?: boolean; priority?: number }) {
+export async function updateProvider(ctx: Ctx, id: ProviderId, p: { model?: string; guardModel?: string; enabled?: boolean; priority?: number }) {
   const r = await ctx.db.query(
-    `UPDATE ai_providers SET model = COALESCE($2, model), enabled = COALESCE($3, enabled), priority = COALESCE($4, priority), updated_at = now() WHERE id = $1`,
-    [id, p.model ?? null, p.enabled ?? null, p.priority ?? null],
+    `UPDATE ai_providers SET model = COALESCE($2, model), enabled = COALESCE($3, enabled), priority = COALESCE($4, priority),
+       guard_model = COALESCE($5, guard_model), updated_at = now() WHERE id = $1`,
+    [id, p.model ?? null, p.enabled ?? null, p.priority ?? null, p.guardModel ?? null],
   );
   if (!r.rowCount) throw notFound("Provider not configured; set its key first");
 }
@@ -45,11 +53,12 @@ export async function deleteProvider(ctx: Ctx, id: ProviderId) {
 }
 
 /** The provider Ilven-AI should use, with its key unsealed. Internal use only. */
-export async function activeProvider(ctx: Ctx): Promise<{ id: ProviderId; model: string; apiKey: string } | null> {
-  const { rows } = await ctx.db.query<{ id: ProviderId; model: string; sealed_key: string }>(
-    "SELECT id, model, sealed_key FROM ai_providers WHERE enabled ORDER BY priority, id LIMIT 1",
+export async function activeProvider(ctx: Ctx): Promise<{ id: ProviderId; model: string; guardModel: string; apiKey: string } | null> {
+  const { rows } = await ctx.db.query<{ id: ProviderId; model: string; guard_model: string | null; sealed_key: string }>(
+    "SELECT id, model, guard_model, sealed_key FROM ai_providers WHERE enabled ORDER BY priority, id LIMIT 1",
   );
-  return rows[0] ? { id: rows[0].id, model: rows[0].model, apiKey: ctx.sealer.open(rows[0].sealed_key) } : null;
+  const r = rows[0];
+  return r ? { id: r.id, model: r.model, guardModel: r.guard_model ?? DEFAULT_GUARD_MODELS[r.id], apiKey: ctx.sealer.open(r.sealed_key) } : null;
 }
 
 export async function aiEnabled(ctx: Ctx): Promise<boolean> {

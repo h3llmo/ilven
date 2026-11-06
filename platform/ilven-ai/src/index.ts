@@ -57,7 +57,7 @@ app.get("/ai/api/status", async (req) => {
   const s = await loadSession(id.sub, appId, true);
   return {
     status: s.status,
-    ...(s.status === "ok" ? { app: s.app, preset: { name: s.preset.name, allowedTools: s.preset.tools.length } } : { message: STATUS_REPLIES[s.status] }),
+    ...(s.status === "ok" ? { app: s.app, preset: { name: s.preset.name, allowedTools: s.preset.tools.length, conversation: s.preset.conversation } } : { message: STATUS_REPLIES[s.status] }),
   };
 });
 
@@ -71,12 +71,13 @@ app.post("/ai/api/chat", async (req) => {
   try {
     const result = await runChat(s.app.name, s.preset, body, {
       model: languageModel(s.provider),
+      guardModel: languageModel(s.provider, s.provider.guardModel),
       caller,
       confirmations,
       sub: id.sub,
       appId: s.app.id,
     });
-    req.log.info({ app: s.app.id, preset: s.preset.name, actions: result.actions.map((a) => `${a.tool}:${a.ok}`), refused: result.refused }, "chat turn");
+    req.log.info({ app: s.app.id, preset: s.preset.name, conversation: s.preset.conversation, actions: result.actions.map((a) => `${a.tool}:${a.ok}`), refused: result.refused }, "chat turn");
     return { status: "ok", ...result };
   } catch (e) {
     if (APICallError.isInstance(e)) {
