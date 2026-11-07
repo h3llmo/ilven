@@ -76,11 +76,21 @@ app.post("/dms/api/files", async (req, reply) => {
 
 app.get("/dms/api/files", async (req) => {
   const caller = await authenticate(req);
-  const q = z.object({ app: z.string().optional(), limit: z.coerce.number().int().min(1).max(200).default(50), before: z.iso.datetime({ offset: true }).optional() }).parse(req.query);
+  const q = z
+    .object({
+      app: z.string().optional(),
+      limit: z.coerce.number().int().min(1).max(200).default(50),
+      before: z.iso.datetime({ offset: true }).optional(),
+      after: z.iso.datetime({ offset: true }).optional(),
+      q: z.string().max(200).optional(), // words in the name or metadata
+    })
+    .parse(req.query);
+  const like = q.q ? `%${q.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%` : null;
   const { rows } = await db.query(
     `SELECT ${COLS} FROM files WHERE owner_sub = $1 AND ($2::text IS NULL OR app_id = $2) AND ($3::timestamptz IS NULL OR created_at < $3)
-     ORDER BY created_at DESC LIMIT $4`,
-    [caller.sub, q.app ?? null, q.before ?? null, q.limit],
+       AND ($4::timestamptz IS NULL OR created_at > $4) AND ($5::text IS NULL OR name ILIKE $5 OR EXISTS (SELECT 1 FROM jsonb_each_text(metadata) m WHERE m.value ILIKE $5))
+     ORDER BY created_at DESC LIMIT $6`,
+    [caller.sub, q.app ?? null, q.before ?? null, q.after ?? null, like, q.limit],
   );
   return { files: rows };
 });

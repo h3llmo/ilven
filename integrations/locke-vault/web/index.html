@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Locke Vault</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>Locke Vault</h1>
+    <div class="quota" title="Vault storage"><div class="bar"><div id="quotaFill"></div></div><span id="quotaText"></span></div>
+    <span class="spacer"></span><span id="who" class="who"></span><button id="logout" class="link">Sign out</button>
+  </header>
+  <div id="banner" class="banner" hidden></div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tabStaged" aria-selected="true">Staged</button>
+    <button role="tab" id="tabSources" aria-selected="false">Sources</button>
+    <button role="tab" id="tabSettings" aria-selected="false">Settings</button>
+  </nav>
+  <main>
+    <section id="staged">
+      <div class="toolbar">
+        <p class="muted">Your encrypted staging area. Files stay here while apps work on them; save the version you want to your documents.</p>
+        <label class="button">Upload<input id="upload" type="file" accept="image/*,application/pdf" multiple hidden /></label>
+      </div>
+      <p id="stagedStatus" class="muted"></p>
+      <div id="items" class="grid"></div>
+      <button id="moreItems" class="secondary" hidden>Load more</button>
+    </section>
+
+    <section id="sources" hidden>
+      <form id="searchForm" class="search">
+        <select id="sourceSelect" aria-label="Data source"></select>
+        <input id="searchText" placeholder="Search…" aria-label="Search text" />
+        <label class="date">From <input id="searchFrom" type="date" /></label>
+        <label class="date">To <input id="searchTo" type="date" /></label>
+        <label class="check" id="favWrap"><input id="searchFav" type="checkbox" /> Favorites</label>
+        <button>Search</button>
+      </form>
+      <p id="sourceInfo" class="muted"></p>
+      <p id="sourceSetup" class="notice" hidden>This source needs setup for you. <button type="button" class="link" id="goSettings">Open settings</button></p>
+      <div id="results" class="grid"></div>
+      <button id="moreResults" class="secondary" hidden>Load more</button>
+    </section>
+
+    <section id="settings" hidden>
+      <div class="card">
+        <h2>iCloud Photos <span class="badge exp">experimental</span></h2>
+        <p class="muted">Lets the vault read the photos of one album in your iCloud library (for example an album named "Locke"),
+          so you can stage them here. It uses Apple's private web access: you sign in with your Apple ID once, your password
+          is never stored, and the Apple session is kept encrypted. It may stop working when Apple changes things, and it
+          can't work if Advanced Data Protection is on for your account. Only users approved by an administrator can use it.</p>
+        <div id="icAccess"></div>
+        <div id="icConnect" hidden>
+          <h3>Apple account</h3>
+          <p id="icState" class="muted"></p>
+          <form id="icLogin" class="row" hidden>
+            <input id="icAppleId" type="email" autocomplete="off" placeholder="Apple ID (email)" aria-label="Apple ID" required />
+            <input id="icPassword" type="password" autocomplete="off" placeholder="Apple ID password" aria-label="Apple ID password" required />
+            <button>Connect</button>
+          </form>
+          <form id="ic2fa" class="row" hidden>
+            <input id="icCode" inputmode="numeric" pattern="\d{6}" maxlength="6" placeholder="6-digit code from your Apple device" aria-label="Verification code" required />
+            <button>Verify</button>
+          </form>
+          <button id="icDisconnect" class="secondary danger" hidden>Disconnect</button>
+          <h3>Album</h3>
+          <form id="icAlbumForm" class="row">
+            <input id="icAlbum" list="icAlbums" placeholder="Locke" aria-label="Album name" required />
+            <datalist id="icAlbums"></datalist>
+            <button>Save album</button>
+          </form>
+          <p id="icMsg" class="muted"></p>
+        </div>
+      </div>
+      <div class="card" id="adminCard" hidden>
+        <h2>Experimental access requests</h2>
+        <p class="muted">Approve only people who understand that the iCloud source signs in to their Apple account.</p>
+        <div id="adminList"></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="detail">
+    <form method="dialog" class="dhead">
+      <input id="dTitle" aria-label="Title" />
+      <button type="button" id="dRename" class="secondary">Rename</button>
+      <span class="spacer"></span>
+      <button class="link" aria-label="Close">✕</button>
+    </form>
+    <div class="dbody">
+      <div class="viewer" id="viewer"></div>
+      <aside>
+        <p id="dOrigin" class="muted"></p>
+        <h3>Versions</h3>
+        <ol id="versions" class="versions"></ol>
+        <label class="check"><input id="compare" type="checkbox" /> Compare with previous</label>
+        <div class="actions">
+          <button id="dPush">Save to documents</button>
+          <a id="dDownload" class="button secondary" href="#">Download</a>
+          <button id="dTrashVersion" class="secondary danger">Trash version</button>
+          <button id="dTrash" class="danger">Trash item</button>
+        </div>
+        <p id="dStatus" class="muted"></p>
+        <div id="dPushes" class="muted"></div>
+      </aside>
+    </div>
+  </dialog>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

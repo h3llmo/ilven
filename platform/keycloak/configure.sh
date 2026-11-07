@@ -21,10 +21,11 @@ $KC update realms/ilven --config "$CFG" \
   -s bruteForceProtected=true -s failureFactor=10 -s waitIncrementSeconds=60 -s maxFailureWaitSeconds=900 \
   -s maxDeltaTimeSeconds=43200 -s permanentLockout=false -s registrationAllowed=true
 
-# 3. Redirect URIs of the web client: local URL + every public host.
+# 3. Redirect URIs of the web client: local URL + every public host (ilven-<name>) + integrated app hosts (<name>).
 uris=("${ILVEN_PUBLIC_URL}/*")
 if [ -n "${ILVEN_PUBLIC_DOMAIN:-}" ]; then
   for h in ${ILVEN_PUBLIC_HOSTS:-}; do uris+=("https://ilven-${h}.${ILVEN_PUBLIC_DOMAIN}/*"); done
+  for h in ${ILVEN_APP_HOSTS:-}; do uris+=("https://${h}.${ILVEN_PUBLIC_DOMAIN}/*"); done
 fi
 json=$(printf '"%s",' "${uris[@]}"); json="[${json%,}]"
 logout=$(printf '%s##' "${uris[@]}"); logout="${logout%##}"

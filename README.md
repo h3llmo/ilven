@@ -20,13 +20,16 @@ Exposed through the `home-warlock` Cloudflare tunnel (no Access policy; Keycloak
 https://ilven-auth.home-warlock.com (identity provider), https://ilven-account.home-warlock.com,
 https://ilven-admin.home-warlock.com, https://ilven-pilot.home-warlock.com. The root of `ilven-<app>.<domain>` opens
 `/apps/<app>/`. To add an app host, add its name to `ILVEN_PUBLIC_HOSTS` in `.env` (Keycloak redirect URIs are
-updated on start) and add a tunnel route and DNS record for it. The Keycloak admin console and master realm are only
+updated on start) and add a tunnel route and DNS record for it. Integrated systems keep their own name
+(`https://locke-vault.home-warlock.com`): list them in `ILVEN_APP_HOSTS`; `<app>.<domain>` opens `/apps/<app>/`. The Keycloak admin console and master realm are only
 reachable from `localhost`.
 
 1. **Pilot** (http://localhost:8080/apps/pilot/): sign in, store your OpenAI key, generate images. Works without the assistant.
 2. **Ilven Account** (/account/): register, choose what to share (age, gender), get your Ilven API key.
 3. **Nevli** (/admin/, as `admin`): add an AI provider key to enable Ilven-AI, then allow tools in Pilot's presets.
    Until you do, the assistant refuses everything.
+4. **Locke Vault** (/apps/locke-vault/): your encrypted staging area (256 MB). Upload files or stage them from a data
+   source (your Ilven documents, Pilot images), browse versions, save the version you want to your documents.
 
 ## Test
 

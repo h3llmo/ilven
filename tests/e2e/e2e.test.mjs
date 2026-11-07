@@ -64,7 +64,7 @@ after(async () => {
 });
 
 test("gateway: landing, front-ends, plugin, runtime config", async () => {
-  for (const p of ["/", "/admin/", "/account/", "/plugin/ilven-plugin.js", "/apps/pilot/"]) assert.equal((await fetch(BASE + p)).status, 200, p);
+  for (const p of ["/", "/admin/", "/account/", "/plugin/ilven-plugin.js", "/apps/pilot/", "/apps/locke-vault/"]) assert.equal((await fetch(BASE + p)).status, 200, p);
   const cfg = await (await fetch(BASE + "/ilven-config.json")).json();
   assert.equal(cfg.authMode, "oidc");
   // Host-based roots for the public hosts.
@@ -74,6 +74,8 @@ test("gateway: landing, front-ends, plugin, runtime config", async () => {
   assert.equal(await root("ilven-pilot.example.com"), "/apps/pilot/");
   assert.equal(await root("ilven-admin.example.com"), "/admin/");
   assert.equal(await root("ilven-account.example.com"), "/account/");
+  assert.equal(await root("locke-vault.example.com"), "/apps/locke-vault/", "integrated systems keep their own name");
+  assert.equal(await root("localhost"), undefined, "no redirect for the local URL");
   // Keycloak admin console and master realm are not reachable through public hosts.
   for (const p of ["/auth/admin/", "/auth/realms/master/protocol/openid-connect/certs"])
     assert.equal((await get(p, "ilven-auth.example.com")).statusCode, 404, p);
@@ -210,4 +212,170 @@ test("criteria 2 & 3 with a real model: allowed tools work, others are refused",
     const files = (await call(alice, "GET", "/dms/api/files?app=pilot")).data.files;
     assert.ok(files.length > 0, "image stored in Nevli-DMS");
   }
+});
+
+// ---------------- Locke-Vault ----------------
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+const PNG2 = Buffer.concat([PNG, Buffer.from("-v2")]); // still a PNG by its signature, different bytes
+const V = "/apps/locke-vault/api";
+const raw = (tok, method, path, bytes, type = "image/png") =>
+  fetch(BASE + path, { method, headers: { authorization: `Bearer ${tok}`, "content-type": type }, body: bytes });
+const bytesOf = async (tok, path) => {
+  const r = await fetch(BASE + path, { headers: { authorization: `Bearer ${tok}` } });
+  return { status: r.status, type: r.headers.get("content-type"), csp: r.headers.get("content-security-policy"), bytes: Buffer.from(await r.arrayBuffer()) };
+};
+
+test("vault: registered with Nevli, MCP tools discovered, viewer served, MCP needs an API key", async () => {
+  await until("vault registered", async () => (await call(null, "GET", "/nevli/api/apps")).data.some?.((a) => a.id === "locke-vault"));
+  const vault = (await call(admin, "GET", "/nevli/api/admin/apps")).data.find((a) => a.id === "locke-vault");
+  assert.deepEqual(vault.tools.map((t) => t.name).sort(), ["get_staged", "list_sources", "list_staged", "save_to_documents", "search_source", "stage_from_source", "trash_staged", "trash_version"]);
+  for (const t of ["trash_staged", "trash_version"]) assert.equal(vault.tools.find((x) => x.name === t).annotations.destructiveHint, true, t);
+  const def = (await call(admin, "GET", "/nevli/api/admin/apps/locke-vault/presets")).data.find((p) => p.isDefault);
+  assert.deepEqual(def.tools, [], "a new app's default preset is empty");
+  assert.equal((await fetch(BASE + "/apps/locke-vault/")).status, 200);
+  const res = await fetch("http://app-locke-vault:8081/mcp", {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "list_staged", arguments: {} } }),
+  });
+  const body = await res.json();
+  assert.ok(body.result?.isError || body.error, JSON.stringify(body));
+});
+
+test("vault: stage, version, isolation, push to DMS, trash, quota", async () => {
+  assert.equal((await call(null, "GET", `${V}/items`)).status, 401);
+  const q0 = (await call(alice, "GET", `${V}/quota`)).data;
+  assert.equal(q0.limit, 256 * 1024 * 1024);
+
+  // Only real images/PDF are accepted, whatever the declared type.
+  assert.equal((await raw(alice, "POST", `${V}/items?title=x`, Buffer.from("<svg><script>alert(1)</script></svg>"), "image/svg+xml")).status, 415);
+  assert.equal((await raw(alice, "POST", `${V}/items?title=x`, Buffer.from("<html>"), "image/png")).status, 415);
+
+  const up = await raw(alice, "POST", `${V}/items?title=${encodeURIComponent("Beach day")}&app=locke`, PNG);
+  assert.equal(up.status, 201);
+  const item = await up.json();
+  assert.equal(item.title, "Beach day");
+  assert.equal(item.versions.length, 1);
+
+  // A Locke transformation adds a version of the same item.
+  const v2 = await raw(alice, "POST", `${V}/items/${item.id}/versions?app=locke&operation=face_swap&note=${encodeURIComponent("with Bob")}`, PNG2);
+  assert.equal(v2.status, 201);
+  const it2 = await v2.json();
+  assert.deepEqual(it2.versions.map((v) => [v.n, v.parent, v.app, v.operation]), [[1, null, "locke", "upload"], [2, 1, "locke", "face_swap"]]);
+  assert.equal(it2.currentVersion, 2);
+
+  const c1 = await bytesOf(alice, `${V}/items/${item.id}/versions/1/content`);
+  assert.equal(c1.status, 200);
+  assert.ok(c1.bytes.equals(PNG), "v1 decrypts to the original bytes");
+  assert.equal(c1.type, "image/png");
+  assert.match(c1.csp, /sandbox/);
+  assert.ok((await bytesOf(alice, `${V}/items/${item.id}/content`)).bytes.equals(PNG2), "latest is v2");
+
+  const q1 = (await call(alice, "GET", `${V}/quota`)).data;
+  assert.equal(q1.used - q0.used, PNG.length + PNG2.length, "quota counts every version");
+
+  // Another user sees nothing and can't act on it.
+  for (const [m, p] of [["GET", `/items/${item.id}`], ["GET", `/items/${item.id}/versions/1/content`], ["DELETE", `/items/${item.id}`], ["POST", `/items/${item.id}/push`], ["DELETE", `/items/${item.id}/versions/2`]])
+    assert.equal((await call(admin, m, V + p, m === "POST" ? {} : undefined)).status, 404, `${m} ${p} as another user`);
+  assert.equal((await raw(admin, "POST", `${V}/items/${item.id}/versions?app=x&operation=y`, PNG)).status, 404);
+  assert.ok(!(await call(admin, "GET", `${V}/items`)).data.items.some((i) => i.id === item.id));
+
+  // Save the chosen version to DMS: the item stays staged.
+  const push = await call(alice, "POST", `${V}/items/${item.id}/push`, { version: 1 });
+  assert.equal(push.status, 200, JSON.stringify(push.data));
+  const dmsFile = (await call(alice, "GET", `/dms/api/files/${push.data.dmsFileId}`)).data;
+  assert.equal(dmsFile.appId, "locke-vault");
+  assert.equal(dmsFile.metadata.vaultVersion, 1);
+  assert.ok((await bytesOf(alice, `/dms/api/files/${push.data.dmsFileId}/content`)).bytes.equals(PNG));
+  const after = (await call(alice, "GET", `${V}/items/${item.id}`)).data;
+  assert.deepEqual(after.pushes.map((p) => p.version), [1]);
+
+  // Trash one version, then the whole item; quota is freed, the DMS copy is kept.
+  assert.equal((await call(alice, "DELETE", `${V}/items/${item.id}/versions/2`)).data.versions.length, 1);
+  assert.equal((await call(alice, "DELETE", `${V}/items/${item.id}/versions/1`)).status, 400, "the only version can't be trashed alone");
+  assert.equal((await call(alice, "DELETE", `${V}/items/${item.id}`)).status, 200);
+  assert.equal((await call(alice, "GET", `${V}/items/${item.id}`)).status, 404);
+  assert.equal((await call(alice, "GET", `${V}/quota`)).data.used, q0.used);
+  assert.equal((await call(alice, "GET", `/dms/api/files/${push.data.dmsFileId}`)).status, 200);
+  await call(alice, "DELETE", `/dms/api/files/${push.data.dmsFileId}`);
+});
+
+test("vault: read-only data sources (DMS built in, Pilot over the source contract)", async () => {
+  // Seed: one plain DMS file and one "generated" Pilot image (stored the way Pilot stores them).
+  const tag = `e2e${Date.now()}`;
+  const d = await (await raw(alice, "POST", `/dms/api/files?name=${tag}-doc.png`, PNG)).json();
+  const pRes = await fetch(`${BASE}/dms/api/files?app=pilot&name=gen.png`, { method: "POST", headers: { authorization: `Bearer ${alice}`, "content-type": "image/png", "x-dms-metadata": JSON.stringify({ prompt: `a ${tag} lighthouse` }) }, body: PNG2 });
+  const p = await pRes.json();
+  try {
+    const list = (await call(alice, "GET", `${V}/sources`)).data.sources;
+    assert.deepEqual(list.map((s) => [s.id, s.available]).sort(), [["dms", true], ["icloud", true], ["pilot", true]]);
+
+    const dq = await call(alice, "POST", `${V}/sources/dms/query`, { text: tag, limit: 10 });
+    assert.equal(dq.status, 200, JSON.stringify(dq.data));
+    assert.deepEqual(dq.data.items.map((i) => i.ref).sort(), [d.id, p.id].sort(), "DMS search matches names and metadata");
+    const pq = await call(alice, "POST", `${V}/sources/pilot/query`, { text: tag, limit: 10 });
+    assert.deepEqual(pq.data.items.map((i) => i.ref), [p.id]);
+    assert.match(pq.data.items[0].description, /lighthouse/);
+    assert.equal((await call(admin, "POST", `${V}/sources/pilot/query`, { text: tag, limit: 10 })).data.items.length, 0, "sources only return the caller's files");
+
+    // Preview without staging, then stage from each source.
+    assert.ok((await bytesOf(alice, `${V}/sources/pilot/items/${p.id}/content`)).bytes.equals(PNG2));
+    const s1 = await call(alice, "POST", `${V}/items/from-source`, { source: "pilot", ref: p.id });
+    assert.equal(s1.status, 201, JSON.stringify(s1.data));
+    assert.deepEqual(s1.data.origin, { kind: "source", source: "pilot", ref: p.id, name: "gen.png" });
+    assert.ok((await bytesOf(alice, `${V}/items/${s1.data.id}/content`)).bytes.equals(PNG2));
+    const s2 = await call(alice, "POST", `${V}/items/from-source`, { source: "dms", ref: d.id, title: "From docs" });
+    assert.equal(s2.data.title, "From docs");
+    assert.equal((await call(admin, "POST", `${V}/items/from-source`, { source: "dms", ref: d.id })).status, 404, "can't stage another user's file");
+    assert.equal((await call(alice, "POST", `${V}/sources/nope/query`, {})).status, 404);
+    for (const s of [s1, s2]) await call(alice, "DELETE", `${V}/items/${s.data.id}`);
+    // Sources are read-only: staging and trashing never changed them.
+    assert.equal((await call(alice, "GET", `/dms/api/files/${p.id}`)).status, 200);
+  } finally {
+    await call(alice, "DELETE", `/dms/api/files/${d.id}`);
+    await call(alice, "DELETE", `/dms/api/files/${p.id}`);
+  }
+});
+
+test("vault: experimental iCloud source is off by default, per user, admin-approved, sidecar private", async () => {
+  const X = `${V}/experimental/icloud`;
+  // Clean slate for alice (re-runnable): an admin removes any previous request.
+  for (const r of (await call(admin, "GET", `${V}/admin/experimental`)).data.icloud) if (r.user === "alice") await call(admin, "POST", `${V}/admin/experimental/${r.id}`, { status: "removed" });
+
+  const src = (await call(alice, "GET", `${V}/sources`)).data.sources.find((s) => s.id === "icloud");
+  assert.equal(src.experimental, true);
+  assert.equal(src.status, "not_allowed");
+  assert.equal((await call(alice, "POST", `${V}/sources/icloud/query`, {})).status, 403);
+  assert.equal((await call(alice, "POST", `${X}/connect`, { appleId: "a@example.com", password: "x" })).status, 403);
+  assert.equal((await call(alice, "PUT", `${X}/album`, { album: "Locke" })).status, 403);
+
+  // Request → only admins see and decide.
+  assert.equal((await call(alice, "POST", `${X}/request-access`)).data.access, "requested");
+  assert.equal((await call(alice, "GET", `${V}/admin/experimental`)).status, 403);
+  const req = (await call(admin, "GET", `${V}/admin/experimental`)).data.icloud.find((r) => r.user === "alice");
+  assert.equal(req.status, "requested");
+  assert.equal((await call(alice, "POST", `${V}/admin/experimental/${req.id}`, { status: "granted" })).status, 403);
+  assert.equal((await call(admin, "POST", `${V}/admin/experimental/${req.id}`, { status: "granted" })).status, 200);
+
+  // Granted for alice only; admin (another user) is still not allowed.
+  const st = (await call(alice, "GET", X)).data;
+  assert.equal(st.access, "granted");
+  assert.equal(st.connection.state, "disconnected", "sidecar reachable from the vault, nothing connected yet");
+  assert.equal((await call(admin, "GET", `${V}/sources`)).data.sources.find((s) => s.id === "icloud").status, "not_allowed");
+  assert.equal((await call(admin, "POST", `${V}/sources/icloud/query`, {})).status, 403);
+  assert.equal((await call(alice, "POST", `${V}/sources/icloud/query`, {})).status, 409, "needs an album first");
+  assert.equal((await call(alice, "PUT", `${X}/album`, { album: "Locke" })).data.album, "Locke");
+  assert.equal((await call(alice, "GET", `${V}/sources`)).data.sources.find((s) => s.id === "icloud").status, "needs_setup", "not connected yet");
+  const q = await call(alice, "POST", `${V}/sources/icloud/query`, {});
+  assert.equal(q.status, 409);
+  assert.equal(q.data.error, "not_connected");
+
+  // The sidecar is not reachable from other containers.
+  await assert.rejects(fetch("http://locke-vault-icloud:8000/healthz", { signal: AbortSignal.timeout(5000) }));
+
+  // Revoke → off again.
+  assert.equal((await call(admin, "POST", `${V}/admin/experimental/${req.id}`, { status: "revoked" })).status, 200);
+  assert.equal((await call(alice, "POST", `${V}/sources/icloud/query`, {})).status, 403);
+  assert.equal((await call(alice, "POST", `${X}/request-access`)).status, 403, "a revoked user can't re-request");
+  await call(admin, "POST", `${V}/admin/experimental/${req.id}`, { status: "removed" });
 });

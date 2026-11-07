@@ -58,6 +58,7 @@ services:
       ILVEN_PUBLIC_URL: ${ILVEN_PUBLIC_URL:-http://localhost:8080}
       ILVEN_PUBLIC_DOMAIN: ${ILVEN_PUBLIC_DOMAIN:-}
       ILVEN_PUBLIC_HOSTS: ${ILVEN_PUBLIC_HOSTS:-}
+      ILVEN_APP_HOSTS: ${ILVEN_APP_HOSTS:-}
     volumes:
       - { type: volume, source: secrets, target: /run/ilven-secrets/keycloak, read_only: true, volume: { subpath: keycloak } }
       - { type: volume, source: secrets, target: /run/ilven-secrets/keycloak-users, read_only: true, volume: { subpath: keycloak-users } }

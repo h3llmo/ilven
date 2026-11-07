@@ -32,6 +32,13 @@
 		not header_regexp Host ^ilven-(account|auth|admin)\.
 	}
 	redir @rootApp /apps/{re.host.1}/
+	# Integrated systems exposed under their own name: <app>.<domain> opens /apps/<app>/ (e.g. locke-vault).
+	@rootIntegration {
+		path /
+		header_regexp ihost Host ^([a-z][a-z0-9-]{0,30})\.[a-z]
+		not header_regexp Host ^ilven-
+	}
+	redir @rootIntegration /apps/{re.ihost.1}/
 
 	# Runtime config for the front-ends (no secrets).
 	handle /ilven-config.json {

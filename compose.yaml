@@ -2,6 +2,7 @@
 # Integrations are pulled in below; removing one = removing its line. The platform never depends on them.
 include:
   - integrations/pilot/compose.yaml
+  - integrations/locke-vault/compose.yaml
 
 x-hardening: &hardening
   restart: unless-stopped

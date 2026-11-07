@@ -6,7 +6,7 @@ import fastifyStatic from "@fastify/static";
 import { z } from "zod";
 import { createCallerAuthenticator, createDb, createServer, env, listen, migrate, retry, Sealer, secret, unauthorized } from "@ilven/common";
 import { mountMcp, McpServer, toolResult } from "@ilven/common/mcp";
-import { deleteImage, deleteOpenAiKey, generateImage, hasOpenAiKey, imageContent, listImages, setOpenAiKey, SIZES, type PilotCtx } from "./pilot.ts";
+import { deleteImage, deleteOpenAiKey, generateImage, hasOpenAiKey, imageContent, listImages, searchImages, setOpenAiKey, SIZES, type PilotCtx } from "./pilot.ts";
 
 const PREFIX = "/apps/pilot";
 const db = createDb();
@@ -45,6 +45,30 @@ web.get(`${PREFIX}/api/images/:id/content`, async (req, reply) => {
   return reply.send(Readable.fromWeb(r.body as never));
 });
 web.delete(`${PREFIX}/api/images/:id`, async (req) => deleteImage(ctx, await authUser(req), (req.params as { id: string }).id));
+
+// ---------- Vault data source (read-only; called by Locke-Vault with the user's own credential) ----------
+const authAny = createCallerAuthenticator({ allowApiKey: true });
+const VS = `${PREFIX}/api/vault-source`;
+web.get(VS, async (req) => {
+  await authAny(req);
+  return { name: "Pilot images", description: "Images you generated in Pilot.", filters: { text: true, dateRange: true, favorite: false } };
+});
+web.post(`${VS}/query`, async (req) => {
+  const c = await authAny(req);
+  const q = z
+    .object({ text: z.string().max(200).optional(), from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional(), limit: z.int().min(1).max(100).default(30), cursor: z.iso.datetime({ offset: true }).optional() })
+    .parse(req.body ?? {});
+  return searchImages(ctx, c, q);
+});
+web.get(`${VS}/items/:ref/content`, async (req, reply) => {
+  const c = await authAny(req);
+  const { ref } = z.object({ ref: z.uuid() }).parse(req.params);
+  const r = await imageContent(ctx, c, ref);
+  reply.header("content-type", r.headers.get("content-type") ?? "application/octet-stream");
+  const cd = r.headers.get("content-disposition");
+  if (cd) reply.header("content-disposition", cd);
+  return reply.send(Readable.fromWeb(r.body as never));
+});
 
 const here = dirname(fileURLToPath(import.meta.url));
 web.register(fastifyStatic, { root: join(here, "web"), prefix: `${PREFIX}/`, index: "index.html" });

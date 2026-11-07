@@ -1,0 +1,137 @@
+# Locke-Vault: encrypted per-user staging area between Locke (and other apps) and Nevli-DMS, with read-only data sources.
+# An integration: it reaches the platform only through its public/internal APIs and registers itself with Nevli.
+services:
+  locke-vault-secrets-init:
+    image: alpine:3.20
+    restart: "no"
+    network_mode: none
+    volumes: [locke-vault-secrets:/secrets]
+    command:
+      - sh
+      - -euc
+      - |
+        umask 022
+        gen() { d=/secrets/$$1; mkdir -p "$$d"; if [ ! -s "$$d/$$2" ]; then head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$$d/$$2"; fi; chmod 0444 "$$d/$$2"; }
+        gen db password
+        gen app master_key
+        gen app ilven_app_secret
+        gen icloud-shared token
+        gen icloud key
+
+  # Gives the vault (non-root) ownership of its encrypted blob volume.
+  locke-vault-volume-init:
+    image: alpine:3.20
+    restart: "no"
+    network_mode: none
+    volumes: [locke-vault-data:/data, locke-vault-icloud-data:/icloud]
+    command: ["sh", "-c", "chown 1000:1000 /data /icloud && chmod 0700 /data /icloud"]
+
+  locke-vault-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    environment:
+      POSTGRES_DB: vault
+      POSTGRES_USER: vault
+      POSTGRES_PASSWORD_FILE: /run/vault-secrets/db/password
+    volumes:
+      - locke-vault-db-data:/var/lib/postgresql/data
+      - { type: volume, source: locke-vault-secrets, target: /run/vault-secrets/db, read_only: true, volume: { subpath: db } }
+    networks: [locke-vault-db]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vault -d vault"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on: { locke-vault-secrets-init: { condition: service_completed_successfully } }
+
+  locke-vault:
+    build: { context: ../.., dockerfile: integrations/locke-vault/Dockerfile }
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    environment:
+      ILVEN_AUTH_MODE: ${ILVEN_AUTH_MODE:-oidc}
+      OIDC_ISSUER: ${ILVEN_OIDC_ISSUER:-}
+      OIDC_JWKS_URL: ${ILVEN_OIDC_JWKS_URL:-}
+      OIDC_AUDIENCE: ilven
+      CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
+      CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
+      DB_HOST: locke-vault-db
+      DB_NAME: vault
+      DB_USER: vault
+      DB_PASSWORD_FILE: /run/vault-secrets/db/password
+      VAULT_MASTER_KEY_FILE: /run/vault-secrets/app/master_key
+      VAULT_APP_SECRET_FILE: /run/vault-secrets/app/ilven_app_secret
+      VAULT_DATA_DIR: /data
+      VAULT_QUOTA_BYTES: ${VAULT_QUOTA_BYTES:-268435456}
+      NEVLI_INTERNAL_URL: http://nevli:3001
+      DMS_URL: http://nevli-dms:3000
+      VAULT_MCP_URL: http://app-locke-vault:8081/mcp
+      # Read-only data sources implementing the vault source contract (see src/sources.ts). Nevli-DMS is built in.
+      # Unreachable sources are shown as unavailable, so removing an app never breaks the vault.
+      VAULT_SOURCES: ${VAULT_SOURCES:-[{"id":"pilot","url":"http://app-pilot:8080/apps/pilot/api/vault-source"}]}
+      # Experimental iCloud Photos source (sidecar below); per-user access is granted by an admin in the vault.
+      ICLOUD_URL: http://locke-vault-icloud:8000
+      ICLOUD_TOKEN_FILE: /run/vault-secrets/icloud/token
+    volumes:
+      - locke-vault-data:/data
+      - { type: volume, source: locke-vault-secrets, target: /run/vault-secrets/db, read_only: true, volume: { subpath: db } }
+      - { type: volume, source: locke-vault-secrets, target: /run/vault-secrets/app, read_only: true, volume: { subpath: app } }
+      - { type: volume, source: locke-vault-secrets, target: /run/vault-secrets/icloud, read_only: true, volume: { subpath: icloud-shared } }
+    user: "1000:1000"
+    networks:
+      default: { aliases: [app-locke-vault] }
+      locke-vault-db: {}
+      locke-vault-icloud: {}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      locke-vault-db: { condition: service_healthy }
+      locke-vault-volume-init: { condition: service_completed_successfully }
+
+  # EXPERIMENTAL iCloud Photos connector (pyicloud). Reachable only from the vault (private network + token);
+  # it has its own egress network to reach Apple. Apple sessions are stored encrypted on its own volume.
+  locke-vault-icloud:
+    build: { context: icloud }
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    user: "1000:1000"
+    environment:
+      ICLOUD_DATA_DIR: /data
+      ICLOUD_TOKEN_FILE: /run/icloud-secrets/shared/token
+      ICLOUD_KEY_FILE: /run/icloud-secrets/key/key
+    volumes:
+      - locke-vault-icloud-data:/data
+      - { type: volume, source: locke-vault-secrets, target: /run/icloud-secrets/shared, read_only: true, volume: { subpath: icloud-shared } }
+      - { type: volume, source: locke-vault-secrets, target: /run/icloud-secrets/key, read_only: true, volume: { subpath: icloud } }
+    networks: [locke-vault-icloud, locke-vault-icloud-egress]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    depends_on:
+      locke-vault-secrets-init: { condition: service_completed_successfully }
+      locke-vault-volume-init: { condition: service_completed_successfully }
+
+networks:
+  locke-vault-db: { internal: true }
+  locke-vault-icloud: { internal: true }
+  locke-vault-icloud-egress: {}
+
+volumes:
+  locke-vault-secrets: {}
+  locke-vault-db-data: {}
+  locke-vault-data: {}
+  locke-vault-icloud-data: {}

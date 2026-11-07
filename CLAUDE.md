@@ -261,6 +261,7 @@ packages/
   web-auth/           # browser lib: OIDC login (oidc-client-ts), authenticated fetch
 integrations/
   pilot/              # spike app, own compose.yaml + Dockerfile
+  locke-vault/        # encrypted per-user staging area + read-only data sources, viewer at /apps/locke-vault/
 tests/e2e/            # end-to-end suite against the running stack
 ```
 - Platform code never imports from `integrations/`. Removing an integration = removing its folder and its `include:` line.
@@ -293,6 +294,37 @@ to the gateway (`192.168.1.14:8080`), with no Cloudflare Access policy: Keycloak
 mode with a fixed issuer host (`ILVEN_AUTH_URL`). The `keycloak-config` job enforces on every start: brute-force
 protection, open self-registration, redirect URIs for `ILVEN_PUBLIC_HOSTS`, and replacement of the seeded dev
 passwords. The gateway waits for that job before serving. The admin console and master realm are blocked on public hosts.
+
+### Locke-Vault (2026-11-07)
+Integration `integrations/locke-vault/`: middleware between Locke (and other apps) and Nevli-DMS for Locke workflows.
+- **Items** are staged files with versions (v1 original; each app transformation adds a version with app, operation,
+  parent). Locke calls the vault REST API with the user's own credential (conventional calls, no connex).
+  Push to DMS saves a chosen version (default latest); the item stays staged until trashed.
+- **Quota** 256 MiB per user (`VAULT_QUOTA_BYTES`), counting every version, enforced under a per-user lock.
+- **Encryption:** per-user data keys sealed by the vault master key (operator could technically decrypt; chosen over
+  strict client-side E2E so Locke can transform images server-side). Blobs and all recognisable metadata (titles,
+  origins, operations) are AES-256-GCM encrypted and bound (AAD) to user/item/version. Postgres holds ids, sizes,
+  types and timestamps only. Content pushed to DMS leaves the vault's encryption (DMS stores plaintext).
+- **Data sources:** read-only contract `ilven-vault-source/1` (`GET {base}`, `POST {base}/query`,
+  `GET {base}/items/{ref}/content`), called with the user's credential. Built in: `dms`. Configured: `VAULT_SOURCES`
+  (default: Pilot, standing in for Locke's generated images). Sources report a per-user status
+  (`ready` / `needs_setup` / `not_allowed`) and an `experimental` flag.
+- **iCloud Photos (EXPERIMENTAL, 2026-11-07):** sidecar `locke-vault-icloud` (Python, `pyicloud` timlaing fork) reads one
+  album chosen by each user (e.g. "Locke"). Off for everyone: users request access in the vault settings, a vault admin
+  (Ilven admin) approves/revokes. Each user connects their own Apple ID (password used once, never stored; 2FA in the
+  UI); the trusted Apple session is AES-GCM encrypted on the sidecar's volume, keyed by an opaque HMAC of the user's
+  `sub`. Apple credentials only via the interactive UI (never API keys/connexes). The sidecar sits on a private network
+  with the vault only (+ its own egress network) and requires a shared token. Photos are converted to JPEG
+  (orientation applied, metadata stripped). Uses Apple's private web API: may break, conflicts with Apple's terms,
+  fails with Advanced Data Protection — only for trusted users. Manual staging only for now.
+- **Next (decided):** automatic import from the album, Locke auto-enhancement, then auto-save to DMS and trash after N
+  days to keep the vault a staging area. A proper photo-sync app (Immich/Dropbox-like) replaces iCloud later.
+- Accepted types are detected from bytes (PNG, JPEG, GIF, WebP, HEIC, AVIF, PDF), 25 MB per file.
+- MCP tools for Ilven-AI (empty default preset): list_staged, get_staged, list_sources, search_source,
+  stage_from_source, save_to_documents, trash_staged and trash_version (destructive).
+- Public host `locke-vault.<domain>`: integrated systems keep their own name (`ILVEN_APP_HOSTS`; the gateway maps
+  `<app>.<domain>` to `/apps/<app>/`), platform hosts use `ilven-<name>` (`ILVEN_PUBLIC_HOSTS`).
+- Known gaps: no expiry of staged items; account deletion doesn't purge vault or DMS data yet.
 
 ### Decisions taken during Phase 0 [TBC — confirm or change]
 1. **Ilven API key storage (§6):** verified by keyed hash (HMAC-SHA256); an AES-256-GCM sealed copy is also kept
