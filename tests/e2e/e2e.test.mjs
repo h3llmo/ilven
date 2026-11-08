@@ -337,6 +337,48 @@ test("vault: read-only data sources (DMS built in, Pilot over the source contrac
   }
 });
 
+test("vault: source collections and \"new since\" (workflows), rollback of the last step", async () => {
+  const tag = `e2n${Date.now()}`;
+  const up = async (app, name) => (await (await fetch(`${BASE}/dms/api/files?name=${tag}-${name}${app ? `&app=${app}` : ""}`, { method: "POST", headers: { authorization: `Bearer ${alice}`, "content-type": "image/png" }, body: PNG })).json());
+  const a = await up("pilot", "a.png");
+  const b = await up(null, "b.png");
+  const c = await up("pilot", "c.png");
+  try {
+    // Collections: DMS offers one per app that saved files for this user.
+    const dms = (await call(alice, "GET", `${V}/sources`)).data.sources.find((s) => s.id === "dms");
+    assert.equal(dms.filters.collection, true);
+    assert.equal(dms.filters.addedAfter, true);
+    assert.ok(dms.collections.some((x) => x.id === "pilot"), JSON.stringify(dms.collections));
+    const inPilot = await call(alice, "POST", `${V}/sources/dms/query`, { text: tag, collection: "pilot", limit: 10 });
+    assert.deepEqual(inPilot.data.items.map((i) => i.ref).sort(), [a.id, c.id].sort());
+
+    // New since: oldest first, strictly after, paged by cursor without repeats; Pilot supports it too.
+    const seen = [];
+    let cursor;
+    do {
+      const r = await call(alice, "POST", `${V}/sources/dms/query`, { text: tag, addedAfter: a.createdAt, limit: 1, ...(cursor ? { cursor } : {}) });
+      assert.equal(r.status, 200, JSON.stringify(r.data));
+      seen.push(...r.data.items.map((i) => i.ref));
+      assert.ok(r.data.items.every((i) => i.addedAt));
+      cursor = r.data.cursor;
+    } while (cursor && seen.length < 10);
+    assert.deepEqual(seen, [b.id, c.id], "only files added after a, oldest first, no repeats");
+    const pilotNew = await call(alice, "POST", `${V}/sources/pilot/query`, { text: tag, addedAfter: a.createdAt, limit: 10 });
+    assert.deepEqual(pilotNew.data.items.map((i) => i.ref), [c.id]);
+    assert.equal((await call(alice, "GET", `${V}/sources`)).data.sources.find((s) => s.id === "icloud").filters.addedAfter, false, "iCloud can't tell when a photo entered an album");
+
+    // Workflow chain (enhance → face swap → background blur last); the user rolls back the last step.
+    const item = (await (await raw(alice, "POST", `${V}/items?title=${tag}`, PNG)).json());
+    for (const op of ["enhance", "face_swap", "background_blur"]) assert.equal((await raw(alice, "POST", `${V}/items/${item.id}/versions?app=locke&operation=${op}`, PNG2)).status, 201);
+    const back = (await call(alice, "DELETE", `${V}/items/${item.id}/versions/4`)).data;
+    assert.deepEqual(back.versions.map((v) => [v.n, v.operation]), [[1, "upload"], [2, "enhance"], [3, "face_swap"]]);
+    assert.equal(back.currentVersion, 3);
+    await call(alice, "DELETE", `${V}/items/${item.id}`);
+  } finally {
+    for (const f of [a, b, c]) await call(alice, "DELETE", `/dms/api/files/${f.id}`);
+  }
+});
+
 test("vault: experimental iCloud source is off by default, per user, admin-approved, sidecar private", async () => {
   const X = `${V}/experimental/icloud`;
   // Clean slate for alice (re-runnable): an admin removes any previous request.
@@ -349,6 +391,10 @@ test("vault: experimental iCloud source is off by default, per user, admin-appro
   assert.equal((await call(alice, "POST", `${X}/connect`, { appleId: "a@example.com", password: "x" })).status, 403);
   assert.equal((await call(alice, "PUT", `${X}/album`, { album: "Locke" })).status, 403);
 
+  // Another user's access (the deployment's real admin may have enabled iCloud for themselves): must not change.
+  const adminAccess = async () => (await call(admin, "GET", X)).data.access;
+  const adminBefore = await adminAccess();
+
   // Request → only admins see and decide.
   assert.equal((await call(alice, "POST", `${X}/request-access`)).data.access, "requested");
   assert.equal((await call(alice, "GET", `${V}/admin/experimental`)).status, 403);
@@ -357,12 +403,11 @@ test("vault: experimental iCloud source is off by default, per user, admin-appro
   assert.equal((await call(alice, "POST", `${V}/admin/experimental/${req.id}`, { status: "granted" })).status, 403);
   assert.equal((await call(admin, "POST", `${V}/admin/experimental/${req.id}`, { status: "granted" })).status, 200);
 
-  // Granted for alice only; admin (another user) is still not allowed.
+  // Granted for alice only; another user's access is unchanged.
   const st = (await call(alice, "GET", X)).data;
   assert.equal(st.access, "granted");
   assert.equal(st.connection.state, "disconnected", "sidecar reachable from the vault, nothing connected yet");
-  assert.equal((await call(admin, "GET", `${V}/sources`)).data.sources.find((s) => s.id === "icloud").status, "not_allowed");
-  assert.equal((await call(admin, "POST", `${V}/sources/icloud/query`, {})).status, 403);
+  assert.equal(await adminAccess(), adminBefore, "granting alice doesn't change another user's access");
   assert.equal((await call(alice, "POST", `${V}/sources/icloud/query`, {})).status, 409, "needs an album first");
   assert.equal((await call(alice, "PUT", `${X}/album`, { album: "Locke" })).data.album, "Locke");
   assert.equal((await call(alice, "GET", `${V}/sources`)).data.sources.find((s) => s.id === "icloud").status, "needs_setup", "not connected yet");

@@ -308,7 +308,14 @@ Integration `integrations/locke-vault/`: middleware between Locke (and other app
 - **Data sources:** read-only contract `ilven-vault-source/1` (`GET {base}`, `POST {base}/query`,
   `GET {base}/items/{ref}/content`), called with the user's credential. Built in: `dms`. Configured: `VAULT_SOURCES`
   (default: Pilot, standing in for Locke's generated images). Sources report a per-user status
-  (`ready` / `needs_setup` / `not_allowed`) and an `experimental` flag.
+  (`ready` / `needs_setup` / `not_allowed`) and an `experimental` flag. Optional capabilities (2026-11-08):
+  **collections** (a source lists the user's collections, e.g. DMS per app, later Locke per scheduled job, and queries
+  filter on one: one source, many collections, so the vault's source list stays fixed) and **addedAfter** ("new since",
+  oldest first, items carry `addedAt`) for automated workflows. iCloud can't know when a photo entered an album, so it
+  doesn't offer addedAfter: workflows list it and remember processed refs.
+- **Versions are linear** (decided 2026-11-08, no alternatives): a workflow chains enhance → face swap → background
+  blur (last). If the user doesn't like a step, they roll back: the latest version is deleted by its number (viewer
+  "Undo last step"; API `DELETE items/:id/versions/:n`), so a version added meanwhile is never the one removed.
 - **iCloud Photos (EXPERIMENTAL, 2026-11-07):** sidecar `locke-vault-icloud` (Python, `pyicloud` timlaing fork) reads one
   album chosen by each user (e.g. "Locke"). Off for everyone: users request access in the vault settings, a vault admin
   (Ilven admin) approves/revokes. Each user connects their own Apple ID (password used once, never stored; 2FA in the

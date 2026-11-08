@@ -210,6 +210,8 @@ mountMcp(mcp, "/mcp", async (req) => {
         from: z.iso.datetime({ offset: true }).optional(),
         to: z.iso.datetime({ offset: true }).optional(),
         favorite: z.boolean().optional(),
+        collection: z.string().min(1).max(100).optional().describe("Collection id from list_sources (sources that offer collections)"),
+        addedAfter: z.iso.datetime({ offset: true }).optional().describe("Only items added after this instant, oldest first (sources that support it)"),
         limit: z.int().min(1).max(50).default(20),
         cursor: z.string().max(500).optional(),
       },

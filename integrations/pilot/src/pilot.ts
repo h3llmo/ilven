@@ -86,12 +86,20 @@ export async function deleteImage(ctx: PilotCtx, caller: Caller, id: string) {
  * Vault data source ("ilven-vault-source/1"): read-only view of the user's generated images, so Locke-Vault can
  * search and stage them. Pilot stands in here for Locke's own generated-images source.
  */
-export async function searchImages(ctx: PilotCtx, caller: Caller, q: { text?: string; from?: string; to?: string; limit: number; cursor?: string }) {
+export async function searchImages(ctx: PilotCtx, caller: Caller, q: { text?: string; from?: string; to?: string; addedAfter?: string; limit: number; cursor?: string }) {
   const p = new URLSearchParams({ app: "pilot", limit: String(q.limit) });
   if (q.text) p.set("q", q.text);
-  if (q.from) p.set("after", q.from);
-  const before = q.cursor ?? q.to;
-  if (before) p.set("before", before);
+  if (q.addedAfter) {
+    // New images since `addedAfter`, oldest first (vault workflows).
+    p.set("order", "asc");
+    const lo = Math.max(...[q.cursor, q.addedAfter, q.from].filter((d): d is string => !!d).map((d) => Date.parse(d)));
+    p.set("after", new Date(lo).toISOString());
+    if (q.to) p.set("before", q.to);
+  } else {
+    if (q.from) p.set("after", q.from);
+    const before = q.cursor ?? q.to;
+    if (before) p.set("before", before);
+  }
   const r = await dms(ctx, caller, `/dms/api/files?${p}`);
   const { files } = (await r.json()) as { files: { id: string; name: string; contentType: string; size: number; metadata: { prompt?: string }; createdAt: string }[] };
   const items = files.map((f) => ({
@@ -100,6 +108,7 @@ export async function searchImages(ctx: PilotCtx, caller: Caller, q: { text?: st
     contentType: f.contentType,
     size: f.size,
     date: new Date(f.createdAt).toISOString(),
+    addedAt: new Date(f.createdAt).toISOString(),
     ...(f.metadata?.prompt ? { description: f.metadata.prompt.slice(0, 1000) } : {}),
   }));
   return { items, cursor: files.length === q.limit ? items[items.length - 1]!.date : null };

@@ -70,7 +70,7 @@ test("HTTP source contract: forwards the user's credential, validates answers, c
     const src = new HttpSource("fake", s.url, 1000);
     const info = await src.info(caller);
     assert.equal(info.name, "Fake");
-    assert.deepEqual(info.filters, { text: true, dateRange: false, favorite: false });
+    assert.deepEqual(info.filters, { text: true, dateRange: false, favorite: false, collection: false, addedAfter: false });
     const page = await src.query(caller, { text: "sea", limit: 10 });
     assert.equal(page.items[0]!.ref, "a/1");
     assert.equal(page.cursor, "next");

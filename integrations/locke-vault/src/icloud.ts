@@ -174,7 +174,7 @@ export class Icloud implements DataSource {
 
   // ----- DataSource -----
   async info(caller: Caller): Promise<SourceInfo> {
-    const base = { name: "iCloud Photos", experimental: true, filters: { text: true, dateRange: true, favorite: false } };
+    const base = { name: "iCloud Photos", experimental: true, filters: { text: true, dateRange: true, favorite: false, collection: false, addedAfter: false }, collections: [] };
     const access = await this.access(caller.sub);
     if (access !== "granted") return { ...base, description: "Experimental. Ask for access in Settings.", status: "not_allowed" };
     const album = await this.album(caller.sub);

@@ -32,6 +32,7 @@
     <section id="sources" hidden>
       <form id="searchForm" class="search">
         <select id="sourceSelect" aria-label="Data source"></select>
+        <select id="searchCollection" aria-label="Collection" hidden></select>
         <input id="searchText" placeholder="Search…" aria-label="Search text" />
         <label class="date">From <input id="searchFrom" type="date" /></label>
         <label class="date">To <input id="searchTo" type="date" /></label>
@@ -99,6 +100,7 @@
         <div class="actions">
           <button id="dPush">Save to documents</button>
           <a id="dDownload" class="button secondary" href="#">Download</a>
+          <button id="dUndo" class="secondary">Undo last step</button>
           <button id="dTrashVersion" class="secondary danger">Trash version</button>
           <button id="dTrash" class="danger">Trash item</button>
         </div>

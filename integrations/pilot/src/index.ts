@@ -51,12 +51,12 @@ const authAny = createCallerAuthenticator({ allowApiKey: true });
 const VS = `${PREFIX}/api/vault-source`;
 web.get(VS, async (req) => {
   await authAny(req);
-  return { name: "Pilot images", description: "Images you generated in Pilot.", filters: { text: true, dateRange: true, favorite: false } };
+  return { name: "Pilot images", description: "Images you generated in Pilot.", filters: { text: true, dateRange: true, favorite: false, addedAfter: true } };
 });
 web.post(`${VS}/query`, async (req) => {
   const c = await authAny(req);
   const q = z
-    .object({ text: z.string().max(200).optional(), from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional(), limit: z.int().min(1).max(100).default(30), cursor: z.iso.datetime({ offset: true }).optional() })
+    .object({ text: z.string().max(200).optional(), from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional(), addedAfter: z.iso.datetime({ offset: true }).optional(), limit: z.int().min(1).max(100).default(30), cursor: z.iso.datetime({ offset: true }).optional() })
     .parse(req.body ?? {});
   return searchImages(ctx, c, q);
 });

@@ -11,12 +11,24 @@ import { HttpError, notFound, type Caller } from "@ilven/common";
  *   GET  {base}/items/{ref}/content   → the file bytes
  * The vault calls it with the user's own credential (IdP token or Ilven API key), so a source only ever returns
  * that user's files.
+ *
+ * Optional capabilities, advertised in SourceInfo.filters (a source ignores what it doesn't advertise):
+ * - collection: the source lists the user's collections in SourceInfo.collections (e.g. one per scheduled job, per
+ *   app, per album) and `query.collection` restricts results to one of them. One source, many collections: the
+ *   vault's source list stays fixed.
+ * - addedAfter: `query.addedAfter` returns only items that entered the source (or the collection) strictly after that
+ *   instant, oldest first, each with `addedAt`; page with `cursor` until it is null and keep the largest `addedAt`.
+ *   Used by automated workflows to pick up new items. A source that can't know when an item was added (iCloud only
+ *   knows when a photo entered the library, not the album) doesn't advertise it: consumers then list everything
+ *   and remember which refs they already processed.
  */
 export const sourceQuerySchema = z.object({
   text: z.string().max(200).optional(),
   from: z.iso.datetime({ offset: true }).optional(),
   to: z.iso.datetime({ offset: true }).optional(),
   favorite: z.boolean().optional(),
+  collection: z.string().min(1).max(100).optional(),
+  addedAfter: z.iso.datetime({ offset: true }).optional(),
   limit: z.int().min(1).max(100).default(30),
   cursor: z.string().max(500).optional(),
 });
@@ -30,8 +42,12 @@ export const sourceItemSchema = z.object({
   date: z.string().max(40).optional(),
   favorite: z.boolean().optional(),
   description: z.string().max(1000).optional(),
+  /** When the item entered the source (sources advertising `addedAfter`). */
+  addedAt: z.string().max(40).optional(),
 });
 export type SourceItem = z.infer<typeof sourceItemSchema>;
+
+export const NO_FILTERS = { text: false, dateRange: false, favorite: false, collection: false, addedAfter: false };
 
 export const sourceInfoSchema = z.object({
   name: z.string().max(80),
@@ -39,7 +55,17 @@ export const sourceInfoSchema = z.object({
   /** Per-user readiness: a source may need setup (or not be allowed) for this user while working for others. */
   status: z.enum(["ready", "needs_setup", "not_allowed"]).default("ready"),
   experimental: z.boolean().default(false),
-  filters: z.object({ text: z.boolean().default(false), dateRange: z.boolean().default(false), favorite: z.boolean().default(false) }).default({ text: false, dateRange: false, favorite: false }),
+  filters: z
+    .object({
+      text: z.boolean().default(false),
+      dateRange: z.boolean().default(false),
+      favorite: z.boolean().default(false),
+      collection: z.boolean().default(false),
+      addedAfter: z.boolean().default(false),
+    })
+    .default(NO_FILTERS),
+  /** This user's collections (filter `collection`). */
+  collections: z.array(z.object({ id: z.string().min(1).max(100), name: z.string().max(120) })).max(200).default([]),
 });
 export type SourceInfo = z.infer<typeof sourceInfoSchema>;
 
@@ -121,16 +147,34 @@ export class DmsSource implements DataSource {
     return res;
   }
 
-  async info() {
-    return { name: "Ilven documents", description: "Files saved in your Ilven document store (Nevli-DMS).", status: "ready" as const, experimental: false, filters: { text: true, dateRange: true, favorite: false } };
+  async info(caller: Caller): Promise<SourceInfo> {
+    // Collections: the apps that saved files for this user (Pilot, Locke Vault…).
+    const { apps } = (await (await this.call(caller, "/dms/api/apps")).json()) as { apps: string[] };
+    return {
+      name: "Ilven documents",
+      description: "Files saved in your Ilven document store (Nevli-DMS).",
+      status: "ready",
+      experimental: false,
+      filters: { text: true, dateRange: true, favorite: false, collection: true, addedAfter: true },
+      collections: apps.map((a) => ({ id: a, name: `Saved by ${a}` })),
+    };
   }
 
   async query(caller: Caller, q: SourceQuery) {
     const p = new URLSearchParams({ limit: String(q.limit) });
     if (q.text) p.set("q", q.text);
-    if (q.from) p.set("after", q.from);
-    const before = q.cursor ?? q.to;
-    if (before) p.set("before", before);
+    if (q.collection) p.set("app", q.collection);
+    if (q.addedAfter) {
+      // Oldest first from addedAfter (or the cursor), bounded by the optional date range.
+      p.set("order", "asc");
+      const lo = Math.max(...[q.cursor, q.addedAfter, q.from].filter((d): d is string => !!d).map((d) => Date.parse(d)));
+      p.set("after", new Date(lo).toISOString());
+      if (q.to) p.set("before", q.to);
+    } else {
+      if (q.from) p.set("after", q.from);
+      const before = q.cursor ?? q.to;
+      if (before) p.set("before", before);
+    }
     const { files } = (await (await this.call(caller, `/dms/api/files?${p}`)).json()) as { files: DmsFile[] };
     const items = files.map((f) => ({
       ref: f.id,
@@ -138,9 +182,10 @@ export class DmsSource implements DataSource {
       contentType: f.contentType,
       size: f.size,
       date: new Date(f.createdAt).toISOString(),
+      addedAt: new Date(f.createdAt).toISOString(),
       description: [f.appId ? `from ${f.appId}` : null, typeof f.metadata?.prompt === "string" ? f.metadata.prompt : null].filter(Boolean).join(": ").slice(0, 1000) || undefined,
     }));
-    return { items, cursor: files.length === q.limit ? items[items.length - 1]!.date : null };
+    return { items, cursor: files.length === q.limit ? items[items.length - 1]!.date! : null };
   }
 
   async fetch(caller: Caller, ref: string) {
@@ -172,7 +217,7 @@ export class SourceRegistry {
         try {
           return { id: s.id, available: true, ...(await s.info(caller)) };
         } catch {
-          return { id: s.id, available: false, name: s.id, description: "Currently unavailable", status: "ready" as const, experimental: false, filters: { text: false, dateRange: false, favorite: false } };
+          return { id: s.id, available: false, name: s.id, description: "Currently unavailable", status: "ready" as const, experimental: false, filters: NO_FILTERS, collections: [] };
         }
       }),
     );

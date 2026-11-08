@@ -8,7 +8,8 @@ type Item = {
 };
 type Source = {
   id: string; available: boolean; name: string; description: string; status: "ready" | "needs_setup" | "not_allowed"; experimental: boolean;
-  filters: { text: boolean; dateRange: boolean; favorite: boolean };
+  filters: { text: boolean; dateRange: boolean; favorite: boolean; collection: boolean; addedAfter: boolean };
+  collections: { id: string; name: string }[];
 };
 type SourceItem = { ref: string; name: string; contentType?: string; size?: number; date?: string; favorite?: boolean; description?: string };
 
@@ -164,11 +165,15 @@ function renderDetail() {
     ...[...it.versions].reverse().map((x) =>
       el("li", { className: x.n === v.n ? "sel" : "", onclick: () => { selectedN = x.n; renderDetail(); } },
         `v${x.n} · ${x.app} / ${x.operation}`,
-        el("small", { textContent: `${when(x.createdAt)} · ${fmt(x.size)}${x.parent ? ` · from v${x.parent}` : ""}${x.note ? ` · ${x.note}` : ""}` })),
+        el("small", { textContent: `${when(x.createdAt)} · ${fmt(x.size)}${x.note ? ` · ${x.note}` : ""}` })),
     ),
   );
   $<HTMLButtonElement>("dPush").textContent = `Save v${v.n} to documents`;
   $<HTMLButtonElement>("dTrashVersion").disabled = it.versions.length === 1;
+  const last = it.versions[it.versions.length - 1]!;
+  const undo = $<HTMLButtonElement>("dUndo");
+  undo.disabled = it.versions.length === 1;
+  undo.textContent = it.versions.length > 1 ? `Undo ${last.operation}` : "Undo last step";
   const dl = $<HTMLAnchorElement>("dDownload");
   dl.onclick = async (e) => {
     e.preventDefault();
@@ -216,6 +221,14 @@ $("dTrashVersion").onclick = () => act(async () => {
   selectedN = current.currentVersion;
   await refreshDetail("Version trashed.");
 });
+// Rollback: remove the latest version (named explicitly, so a version added meanwhile is never the one removed).
+$("dUndo").onclick = () => act(async () => {
+  const last = current!.versions[current!.versions.length - 1]!;
+  if (!confirm(`Undo "${last.operation}" (v${last.n})? That version is deleted and v${current!.versions[current!.versions.length - 2]!.n} becomes the current one.`)) return;
+  current = await api<Item>(auth, "DELETE", `${A}/items/${current!.id}/versions/${last.n}`);
+  selectedN = current.currentVersion;
+  await refreshDetail(`Rolled back to v${current.currentVersion}.`);
+});
 $("dTrash").onclick = () => act(async () => {
   const saved = current!.pushes.length ? " Copies saved to your documents are kept." : " It was never saved to your documents.";
   if (!confirm(`Permanently delete "${current!.title}" and all its versions?${saved}`)) return;
@@ -246,6 +259,10 @@ function onSourceChange() {
   $("searchText").hidden = !s?.filters.text;
   for (const id of ["searchFrom", "searchTo"]) $(id).parentElement!.hidden = !s?.filters.dateRange;
   $("favWrap").hidden = !s?.filters.favorite;
+  const coll = $<HTMLSelectElement>("searchCollection");
+  const showColl = !!s?.filters.collection && s.collections.length > 0;
+  coll.hidden = !showColl;
+  coll.replaceChildren(el("option", { value: "", textContent: "All" }), ...(showColl ? s!.collections.map((c) => el("option", { value: c.id, textContent: c.name })) : []));
   $("sourceSetup").hidden = !s || s.status === "ready";
   results = [];
   resultsCursor = null;
@@ -253,6 +270,7 @@ function onSourceChange() {
   if (s?.available && s.status === "ready") void search();
 }
 $("sourceSelect").onchange = onSourceChange;
+$("searchCollection").onchange = () => void search();
 
 function resultTile(s: Source, r: SourceItem) {
   const url = `${A}/sources/${encodeURIComponent(s.id)}/items/${encodeURIComponent(r.ref)}/content`;
@@ -293,6 +311,7 @@ async function search(more = false) {
     from: s.filters.dateRange ? day("searchFrom", false) : undefined,
     to: s.filters.dateRange ? day("searchTo", true) : undefined,
     favorite: s.filters.favorite && $<HTMLInputElement>("searchFav").checked ? true : undefined,
+    collection: s.filters.collection ? $<HTMLSelectElement>("searchCollection").value || undefined : undefined,
     limit: 30,
     cursor: more ? resultsCursor ?? undefined : undefined,
   };

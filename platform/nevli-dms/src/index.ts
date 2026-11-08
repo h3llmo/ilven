@@ -83,16 +83,27 @@ app.get("/dms/api/files", async (req) => {
       before: z.iso.datetime({ offset: true }).optional(),
       after: z.iso.datetime({ offset: true }).optional(),
       q: z.string().max(200).optional(), // words in the name or metadata
+      order: z.enum(["desc", "asc"]).default("desc"), // asc: oldest first (follow new files with `after`)
     })
     .parse(req.query);
   const like = q.q ? `%${q.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%` : null;
+  // Bounds compare at millisecond precision, the precision of `createdAt` in answers, so a cursor taken from an
+  // answer never returns the same file again.
+  const at = "date_trunc('milliseconds', created_at)";
   const { rows } = await db.query(
-    `SELECT ${COLS} FROM files WHERE owner_sub = $1 AND ($2::text IS NULL OR app_id = $2) AND ($3::timestamptz IS NULL OR created_at < $3)
-       AND ($4::timestamptz IS NULL OR created_at > $4) AND ($5::text IS NULL OR name ILIKE $5 OR EXISTS (SELECT 1 FROM jsonb_each_text(metadata) m WHERE m.value ILIKE $5))
-     ORDER BY created_at DESC LIMIT $6`,
+    `SELECT ${COLS} FROM files WHERE owner_sub = $1 AND ($2::text IS NULL OR app_id = $2) AND ($3::timestamptz IS NULL OR ${at} < $3)
+       AND ($4::timestamptz IS NULL OR ${at} > $4) AND ($5::text IS NULL OR name ILIKE $5 OR EXISTS (SELECT 1 FROM jsonb_each_text(metadata) m WHERE m.value ILIKE $5))
+     ORDER BY created_at ${q.order === "asc" ? "ASC" : "DESC"}, id LIMIT $6`,
     [caller.sub, q.app ?? null, q.before ?? null, q.after ?? null, like, q.limit],
   );
   return { files: rows };
+});
+
+/** The apps that saved files for the caller (for filtering by app). */
+app.get("/dms/api/apps", async (req) => {
+  const caller = await authenticate(req);
+  const { rows } = await db.query<{ app_id: string }>("SELECT DISTINCT app_id FROM files WHERE owner_sub = $1 AND app_id IS NOT NULL ORDER BY app_id", [caller.sub]);
+  return { apps: rows.map((r) => r.app_id) };
 });
 
 app.get("/dms/api/files/:id", async (req) => own(await authenticate(req), (req.params as { id: string }).id));
