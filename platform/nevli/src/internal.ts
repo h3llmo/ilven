@@ -5,7 +5,8 @@ import { mountMcp, McpServer, toolResult } from "@ilven/common/mcp";
 import type { Actor, Ctx } from "./context.ts";
 import { mcpOps, requireAdmin } from "./ops.ts";
 import { parseInput } from "./api.ts";
-import { registerApp, type AppTool } from "./services/apps.ts";
+import { registerApp, verifyAppSecret, type AppTool } from "./services/apps.ts";
+import { garageConfig, provisionAppStorage, StorageUnavailable } from "./services/storage.ts";
 import { unsealApiKey, verifyApiKey } from "./services/keys.ts";
 import { activeProvider, aiEnabled } from "./services/providers.ts";
 import { userBySub } from "./services/users.ts";
@@ -54,6 +55,21 @@ export function registerInternalApi(app: FastifyInstance, ctx: Ctx, internalToke
     if (b.id === "nevli") throw unauthorized("Reserved app id");
     await registerApp(ctx, { ...b, kind: "integration" });
     return { ok: true };
+  });
+
+  // A registered integration gets its object storage (one private bucket and an S3 key limited to it).
+  // Authenticated by the app secret it registered with; the platform's storage admin token never leaves Nevli.
+  app.post("/internal/apps/storage", async (req, reply) => {
+    const b = z.object({ id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/), secret: z.string().min(32).max(200) }).parse(req.body);
+    if (!(await verifyAppSecret(ctx, b.id, b.secret))) throw unauthorized("Unknown app or wrong app secret");
+    const g = garageConfig();
+    if (!g) return reply.status(503).send({ error: "storage_unavailable", message: "Object storage is not configured" });
+    try {
+      return await provisionAppStorage(ctx, g, b.id);
+    } catch (e) {
+      if (e instanceof StorageUnavailable) return reply.status(503).send({ error: "storage_unavailable", message: e.message });
+      throw e;
+    }
   });
 
   // Ilven-AI loads the connex of (user, app). This is the only place a user's API key or a provider key is unsealed.

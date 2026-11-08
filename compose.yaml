@@ -62,6 +62,8 @@ services:
         gen ai confirm_key
         gen keycloak-users admin
         gen keycloak-users alice
+        gen garage rpc_secret
+        gen garage admin_token
 
   gateway:
     build: { context: ., target: gateway }
@@ -97,7 +99,13 @@ services:
       NEVLI_MASTER_KEY_FILE: /run/ilven-secrets/nevli/master_key
       ILVEN_INTERNAL_TOKEN_FILE: /run/ilven-secrets/internal/token
       COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-ilven}
+      # Object storage for apps: Nevli alone holds the admin token and hands each registered app its own bucket.
+      GARAGE_ADMIN_URL: http://garage:3903
+      GARAGE_ADMIN_TOKEN_FILE: /run/ilven-secrets/garage/admin_token
+      GARAGE_S3_URL: http://garage:3900
+      GARAGE_CAPACITY_BYTES: ${GARAGE_CAPACITY_BYTES:-21474836480}
     volumes:
+      - { type: volume, source: secrets, target: /run/ilven-secrets/garage, read_only: true, volume: { subpath: garage } }
       - { type: volume, source: secrets, target: /run/ilven-secrets/db, read_only: true, volume: { subpath: nevli-db } }
       - { type: volume, source: secrets, target: /run/ilven-secrets/nevli, read_only: true, volume: { subpath: nevli } }
       - { type: volume, source: secrets, target: /run/ilven-secrets/internal, read_only: true, volume: { subpath: internal } }
@@ -155,6 +163,33 @@ services:
       dms-volume-init: { condition: service_completed_successfully }
       nevli-dms-db: { condition: service_healthy }
 
+  # Object storage (Garage, S3-compatible) for apps' binaries. Apps reach the S3 API (:3900) with the bucket-scoped key
+  # Nevli gives them; the admin API (:3903) needs the admin token, which only Nevli has.
+  garage:
+    <<: *hardening
+    build: { context: ., target: garage }
+    init: false
+    user: "1000:1000"
+    volumes:
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+      - { type: volume, source: secrets, target: /run/garage-secrets, read_only: true, volume: { subpath: garage } }
+    healthcheck:
+      test: ["CMD", "/garage", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    depends_on:
+      secrets-init: { condition: service_completed_successfully }
+      garage-volume-init: { condition: service_completed_successfully }
+
+  garage-volume-init:
+    image: alpine:3.20
+    restart: "no"
+    network_mode: none
+    volumes: [garage-meta:/meta, garage-data:/data]
+    command: ["sh", "-c", "chown 1000:1000 /meta /data && chmod 0700 /meta /data"]
+
   # Gives the DMS (non-root) ownership of its data volume.
   dms-volume-init:
     image: alpine:3.20
@@ -175,3 +210,5 @@ volumes:
   nevli-db-data: {}
   dms-db-data: {}
   dms-data: {}
+  garage-meta: {}
+  garage-data: {}

@@ -92,3 +92,10 @@ export async function listApps(ctx: Ctx) {
   );
   return rows;
 }
+
+/** True when `secret` is the app secret the integration registered with (integrations only). */
+export async function verifyAppSecret(ctx: Ctx, appId: string, secret: string): Promise<boolean> {
+  const { rows } = await ctx.db.query<{ secret_hash: string | null }>("SELECT secret_hash FROM apps WHERE id = $1 AND kind = 'integration'", [appId]);
+  const stored = rows[0]?.secret_hash;
+  return !!stored && safeEqual(stored, hmacHex(ctx.masterKey, "ilven/app-secret", secret));
+}

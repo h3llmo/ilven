@@ -225,6 +225,17 @@ const bytesOf = async (tok, path) => {
   return { status: r.status, type: r.headers.get("content-type"), csp: r.headers.get("content-security-policy"), bytes: Buffer.from(await r.arrayBuffer()) };
 };
 
+test("object storage: Garage is private; apps get their bucket from Nevli with their app secret only", async () => {
+  const storage = (body) => fetch(`${NEVLI_INTERNAL}/internal/apps/storage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  assert.equal((await storage({ id: "locke-vault", secret: "x".repeat(40) })).status, 401, "wrong app secret");
+  assert.equal((await storage({ id: "no-such-app", secret: "x".repeat(40) })).status, 401, "unknown app");
+  assert.equal((await storage({ id: "nevli", secret: "x".repeat(40) })).status, 401, "platform apps get no storage");
+  const adminApi = await fetch("http://garage:3903/v2/GetClusterStatus");
+  assert.ok([401, 403].includes(adminApi.status), `Garage admin API without token: ${adminApi.status}`);
+  const s3 = await fetch("http://garage:3900/");
+  assert.ok([401, 403].includes(s3.status), `anonymous S3: ${s3.status}`);
+});
+
 test("vault: registered with Nevli, MCP tools discovered, viewer served, MCP needs an API key", async () => {
   await until("vault registered", async () => (await call(null, "GET", "/nevli/api/apps")).data.some?.((a) => a.id === "locke-vault"));
   const vault = (await call(admin, "GET", "/nevli/api/admin/apps")).data.find((a) => a.id === "locke-vault");

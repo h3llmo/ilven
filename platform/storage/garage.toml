@@ -1,0 +1,21 @@
+# Garage (S3-compatible object storage), single node. Apps never get the admin token: Nevli provisions one bucket
+# and one bucket-scoped key per registered app (POST /internal/apps/storage).
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "lmdb"
+metadata_fsync = true
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+rpc_secret_file = "/run/garage-secrets/rpc_secret"
+# Secrets come from the platform's generated-secrets volume (mounted read-only, only into garage and nevli).
+allow_world_readable_secrets = true
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+
+[admin]
+api_bind_addr = "[::]:3903"
+admin_token_file = "/run/garage-secrets/admin_token"

@@ -28,3 +28,7 @@ COPY platform/gateway/site/ /srv/
 COPY --from=build /src/platform/nevli-web/dist/ /srv/admin/
 COPY --from=build /src/platform/ilven-account/dist/ /srv/account/
 COPY --from=build /src/platform/ui-plugin/dist/ /srv/plugin/
+
+# Object storage (Garage, S3-compatible). Config only; secrets come from the generated-secrets volume.
+FROM dxflrs/garage:v2.1.0 AS garage
+COPY platform/storage/garage.toml /etc/garage.toml
