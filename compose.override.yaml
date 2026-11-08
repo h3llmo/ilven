@@ -1,4 +1,4 @@
-# Dev overlay: Keycloak as the identity provider (realm "ilven" imported on start, with dev users admin/admin and alice/alice).
+# Dev overlay (loaded automatically by `docker compose` when COMPOSE_FILE is not set): Keycloak as the identity provider (realm "ilven" imported on start, with dev users admin/admin and alice/alice).
 services:
   keycloak-db:
     image: postgres:16-alpine

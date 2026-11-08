@@ -242,9 +242,9 @@ Decided 2026-11-06.
 ## 11. Repository layout
 Monorepo. Platform and integrations are strictly separated.
 ```
-.env                  # compose defaults (no secrets). COMPOSE_FILE selects dev/prod/optional overlays
+.env.example          # every deployment setting with its default. The real .env is untracked (per deployment, no secrets)
 compose.yaml          # platform only; `include:`s integrations
-compose.dev.yaml      # dev overlay: Keycloak (+ realm import) and the e2e test service (profile "test")
+compose.override.yaml # dev overlay, auto-loaded when COMPOSE_FILE is unset: Keycloak (+ realm import), e2e service (profile "test")
 compose.docker.yaml   # OPTIONAL overlay: docker socket proxy for Nevli container management
 Dockerfile            # platform images: shared build stage (typecheck + unit tests + build), one target per service
 platform/
@@ -265,7 +265,8 @@ integrations/
 tests/e2e/            # end-to-end suite against the running stack
 ```
 - Platform code never imports from `integrations/`. Removing an integration = removing its folder and its `include:` line.
-- Run: `docker compose up -d` → http://localhost:8080. Tests: `docker compose --profile test run --rm e2e`.
+- Run: `docker compose up -d` → http://localhost:8080 (works with no `.env`: compose files hold every default;
+  a deployment's own settings, e.g. domain or the docker.sock overlay, go in its untracked `.env`). Tests: `docker compose --profile test run --rm e2e`.
 - Unit tests: `node:test` via `tsx` (run inside the image build). Nevli's admin REST routes and MCP tools are both
   generated from `platform/nevli/src/ops.ts`; change operations there only.
 - Gateway convention: `/apps/<name>/*` → container alias `app-<name>:8080` (apps opt in by declaring the alias).

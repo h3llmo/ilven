@@ -1,5 +1,8 @@
 # Ilven platform. Runs with nothing but the right to start Docker: no bind mounts, no docker.sock, no host scripts.
 # Integrations are pulled in below; removing one = removing its line. The platform never depends on them.
+# Works with no .env at all: every setting has a default here (dev: Keycloak from compose.override.yaml, loaded
+# automatically). A deployment puts its own settings in an untracked .env (see .env.example).
+name: ilven
 include:
   - integrations/pilot/compose.yaml
   - integrations/locke-vault/compose.yaml
@@ -14,8 +17,8 @@ x-hardening: &hardening
 
 x-auth-env: &auth-env
   ILVEN_AUTH_MODE: ${ILVEN_AUTH_MODE:-oidc}
-  OIDC_ISSUER: ${ILVEN_OIDC_ISSUER:-}
-  OIDC_JWKS_URL: ${ILVEN_OIDC_JWKS_URL:-}
+  OIDC_ISSUER: ${ILVEN_OIDC_ISSUER:-${ILVEN_AUTH_URL:-http://localhost:8080/auth}/realms/ilven}
+  OIDC_JWKS_URL: ${ILVEN_OIDC_JWKS_URL:-http://keycloak:8080/auth/realms/ilven/protocol/openid-connect/certs}
   OIDC_AUDIENCE: ilven
   CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
   CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
@@ -66,7 +69,7 @@ services:
     ports: ["${ILVEN_HTTP_PORT:-8080}:80"]
     environment:
       ILVEN_AUTH_MODE: ${ILVEN_AUTH_MODE:-oidc}
-      ILVEN_OIDC_ISSUER: ${ILVEN_OIDC_ISSUER:-}
+      ILVEN_OIDC_ISSUER: ${ILVEN_OIDC_ISSUER:-${ILVEN_AUTH_URL:-http://localhost:8080/auth}/realms/ilven}
       ILVEN_OIDC_CLIENT_ID: ${ILVEN_OIDC_CLIENT_ID:-ilven-web}
     volumes: [gateway-data:/data, gateway-config:/config]
 

@@ -3,7 +3,7 @@
 #   GET  /containers/json             (list; Nevli filters on this compose project's label)
 #   POST /containers/<id>/restart
 # Everything else (create, exec, images, volumes, ...) is rejected by the proxy. Only the nevli container may connect.
-# Enable: append ":compose.docker.yaml" to COMPOSE_FILE in .env.
+# Enable in your .env: COMPOSE_FILE=compose.yaml:compose.override.yaml:compose.docker.yaml (see .env.example).
 services:
   docker-proxy:
     image: wollomatic/socket-proxy:1.13.2

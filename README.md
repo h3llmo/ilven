@@ -41,8 +41,12 @@ E2E_ANTHROPIC_API_KEY=... E2E_OPENAI_API_KEY=... docker compose --profile test r
 
 ## Options
 
-- **Container management from Nevli** (optional; needs docker.sock, which is root-equivalent): append
-  `:compose.docker.yaml` to `COMPOSE_FILE` in `.env`. Nevli reaches Docker only through `wollomatic/socket-proxy`, whose
+Deployment settings go in an untracked `.env` (copy what you need from `.env.example`, which lists every setting and
+its default). Without a `.env`, `docker compose up` runs the dev setup: platform + Keycloak (`compose.override.yaml`,
+loaded automatically) on http://localhost:8080.
+
+- **Container management from Nevli** (optional; needs docker.sock, which is root-equivalent): in `.env`, set
+  `COMPOSE_FILE=compose.yaml:compose.override.yaml:compose.docker.yaml`. Nevli reaches Docker only through `wollomatic/socket-proxy`, whose
   allowlist permits exactly `GET /containers/json` and `POST /containers/<id>/restart`, and only from the nevli container.
 - **Production with Cloudflare Access:** in `.env`, set `COMPOSE_FILE=compose.yaml`, `ILVEN_AUTH_MODE=cloudflare`,
   `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`, `ILVEN_ADMIN_EMAILS` and `ILVEN_PUBLIC_URL`.

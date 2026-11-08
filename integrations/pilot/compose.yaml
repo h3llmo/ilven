@@ -45,8 +45,8 @@ services:
     cap_drop: [ALL]
     environment:
       ILVEN_AUTH_MODE: ${ILVEN_AUTH_MODE:-oidc}
-      OIDC_ISSUER: ${ILVEN_OIDC_ISSUER:-}
-      OIDC_JWKS_URL: ${ILVEN_OIDC_JWKS_URL:-}
+      OIDC_ISSUER: ${ILVEN_OIDC_ISSUER:-${ILVEN_AUTH_URL:-http://localhost:8080/auth}/realms/ilven}
+      OIDC_JWKS_URL: ${ILVEN_OIDC_JWKS_URL:-http://keycloak:8080/auth/realms/ilven/protocol/openid-connect/certs}
       OIDC_AUDIENCE: ilven
       CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
       CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
