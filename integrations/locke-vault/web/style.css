@@ -71,3 +71,4 @@ aside h3 { font-size: 14px; margin: 10px 0 6px; }
 .notice { background: #fff7dd; border: 1px solid #f0e2a8; border-radius: 8px; padding: 8px 10px; font-size: 13px; }
 .req { display: flex; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
 .req span { flex: 1; min-width: 160px; }
+.checks { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 12px; } .checks .check { font-size: 14px; color: inherit; min-height: 32px; }

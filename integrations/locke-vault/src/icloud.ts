@@ -27,6 +27,15 @@ export const ICLOUD_MIGRATION = {
 };
 
 const FEATURE = "icloud";
+const MAX_ALBUMS = 20;
+const SMART: Record<string, string> = { favorites: "Favorites", hidden: "Hidden" };
+/** Collection id → the album name the sidecar knows ("a:Locke" → "Locke", "favorites" → "Favorites"). */
+export function albumOf(id: string): string | null {
+  if (SMART[id]) return SMART[id]!;
+  const m = /^a:(.{1,98})$/s.exec(id);
+  return m && m[1]!.trim() && !/[\u0000-\u001f]/.test(m[1]!) ? m[1]! : null;
+}
+const labelOf = (id: string) => albumOf(id) ?? id;
 const aadSetting = (sub: string, name: string) => `setting:${sub}:${name}`;
 
 /** Readable name for the admin's access list, taken from the (already verified) login token. Stored sealed. */
@@ -117,31 +126,44 @@ export class Icloud implements DataSource {
   }
 
   // ----- per-user settings and Apple connection -----
-  private async album(sub: string): Promise<string | null> {
-    const { rows } = await this.db.query<{ sealed: string }>("SELECT sealed FROM user_settings WHERE owner_sub = $1 AND name = 'icloud_album'", [sub]);
-    if (!rows[0]) return null;
-    return (await userKey(this.db, this.master, sub)).openJson<string>(rows[0].sealed, aadSetting(sub, "icloud_album"));
+  /**
+   * The albums this user lets the vault read, as collection ids: "a:<album name>", or the smart albums "favorites" and
+   * "hidden". Nothing else in the library is ever read. Stored sealed with the user's key.
+   */
+  private async chosen(sub: string): Promise<string[]> {
+    const { rows } = await this.db.query<{ name: string; sealed: string }>(
+      "SELECT name, sealed FROM user_settings WHERE owner_sub = $1 AND name IN ('icloud_albums', 'icloud_album')", [sub],
+    );
+    const key = rows.length ? await userKey(this.db, this.master, sub) : null;
+    const many = rows.find((r) => r.name === "icloud_albums");
+    if (many) return key!.openJson<string[]>(many.sealed, aadSetting(sub, "icloud_albums"));
+    const one = rows.find((r) => r.name === "icloud_album"); // before several albums: one album name
+    return one ? [`a:${key!.openJson<string>(one.sealed, aadSetting(sub, "icloud_album"))}`] : [];
   }
 
-  async setAlbum(caller: Caller, album: string) {
+  async setAlbums(caller: Caller, collections: string[]) {
     await this.requireAccess(caller);
+    const ids = [...new Set(collections)];
+    if (ids.length > MAX_ALBUMS) throw badRequest(`At most ${MAX_ALBUMS} albums`);
+    for (const id of ids) if (!albumOf(id)) throw badRequest("Unknown album");
     const key = await userKey(this.db, this.master, caller.sub);
     await this.db.query(
-      `INSERT INTO user_settings (owner_sub, name, sealed) VALUES ($1, 'icloud_album', $2)
+      `INSERT INTO user_settings (owner_sub, name, sealed) VALUES ($1, 'icloud_albums', $2)
        ON CONFLICT (owner_sub, name) DO UPDATE SET sealed = EXCLUDED.sealed`,
-      [caller.sub, key.sealJson(album, aadSetting(caller.sub, "icloud_album"))],
+      [caller.sub, key.sealJson(ids, aadSetting(caller.sub, "icloud_albums"))],
     );
+    await this.db.query("DELETE FROM user_settings WHERE owner_sub = $1 AND name = 'icloud_album'", [caller.sub]);
     return this.status(caller);
   }
 
   async status(caller: Caller) {
     const access = await this.access(caller.sub);
-    if (access !== "granted") return { access, connection: { state: "disconnected" as string, appleId: null as string | null, message: null as string | null }, album: null };
-    const [conn, album] = await Promise.all([
+    if (access !== "granted") return { access, connection: { state: "disconnected" as string, appleId: null as string | null, message: null as string | null }, albums: [] as string[] };
+    const [conn, albums] = await Promise.all([
       this.sidecar(`/status?user=${this.uid(caller.sub)}`).then((r) => r.json() as Promise<{ state: string; appleId?: string; message?: string }>).catch((e: Error) => ({ state: "unavailable", message: e.message })),
-      this.album(caller.sub),
+      this.chosen(caller.sub),
     ]);
-    return { access, connection: { state: conn.state, appleId: ("appleId" in conn && conn.appleId) || null, message: conn.message ?? null }, album };
+    return { access, connection: { state: conn.state, appleId: ("appleId" in conn && conn.appleId) || null, message: conn.message ?? null }, albums };
   }
 
   private requireInteractive(caller: Caller) {
@@ -173,37 +195,50 @@ export class Icloud implements DataSource {
   }
 
   // ----- DataSource -----
+  // Each chosen album is a collection; a query names one (the first chosen when it doesn't). Refs carry their album
+  // ("c.<collection>.<photo id>"), so a photo is only ever read from an album the user chose.
   async info(caller: Caller): Promise<SourceInfo> {
-    const base = { name: "iCloud Photos", experimental: true, filters: { text: true, dateRange: true, favorite: false, collection: false, addedAfter: false }, collections: [] };
+    const base = {
+      name: "iCloud Photos", experimental: true, allCollections: false,
+      filters: { text: true, dateRange: true, favorite: false, collection: true, addedAfter: false }, collections: [] as { id: string; name: string }[],
+    };
     const access = await this.access(caller.sub);
     if (access !== "granted") return { ...base, description: "Experimental. Ask for access in Settings.", status: "not_allowed" };
-    const album = await this.album(caller.sub);
-    if (!album) return { ...base, description: "Choose your album in Settings.", status: "needs_setup" };
+    const ids = await this.chosen(caller.sub);
+    const collections = ids.map((id) => ({ id, name: labelOf(id) }));
+    if (!ids.length) return { ...base, collections, description: "Choose your albums in Settings.", status: "needs_setup" };
     const st = await this.status(caller);
-    if (st.connection.state !== "connected") return { ...base, description: st.connection.message ?? "Connect your Apple account in Settings.", status: "needs_setup" };
-    return { ...base, description: `Photos in your "${album}" album.`, status: "ready" };
+    if (st.connection.state !== "connected") return { ...base, collections, description: st.connection.message ?? "Connect your Apple account in Settings.", status: "needs_setup" };
+    return { ...base, collections, description: `Photos in ${ids.length === 1 ? `your "${labelOf(ids[0]!)}" album` : `${ids.length} of your albums`}.`, status: "ready" };
   }
 
-  private async ready(caller: Caller) {
+  private async collection(caller: Caller, wanted?: string) {
     await this.requireAccess(caller);
-    const album = await this.album(caller.sub);
-    if (!album) throw new HttpError(409, "needs_setup", "Choose your iCloud album in the vault settings first");
-    return album;
+    const ids = await this.chosen(caller.sub);
+    if (!ids.length) throw new HttpError(409, "needs_setup", "Choose your iCloud albums in the vault settings first");
+    const id = wanted ?? ids[0]!;
+    if (!ids.includes(id)) throw notFound("No such album in your iCloud choices");
+    return { id, album: albumOf(id)! };
   }
 
   async query(caller: Caller, q: SourceQuery): Promise<SourcePage> {
-    const album = await this.ready(caller);
-    const r = await this.sidecar("/query", { method: "POST", body: JSON.stringify({ user: this.uid(caller.sub), album, text: q.text, from: q.from, to: q.to, limit: q.limit, cursor: q.cursor }) });
-    return (await r.json()) as SourcePage;
+    const c = await this.collection(caller, q.collection);
+    const r = await this.sidecar("/query", { method: "POST", body: JSON.stringify({ user: this.uid(caller.sub), album: c.album, text: q.text, from: q.from, to: q.to, limit: q.limit, cursor: q.cursor }) });
+    const page = (await r.json()) as SourcePage;
+    return { ...page, items: page.items.map((i) => ({ ...i, ref: `c.${Buffer.from(c.id).toString("base64url")}.${i.ref}` })) };
   }
 
   async fetch(caller: Caller, ref: string) {
-    const album = await this.ready(caller);
-    if (ref.length > 300) throw badRequest("Invalid reference");
-    const r = await this.sidecar(`/content?user=${this.uid(caller.sub)}&album=${encodeURIComponent(album)}&ref=${encodeURIComponent(ref)}`);
+    if (ref.length > 500) throw badRequest("Invalid reference");
+    const m = /^c\.([A-Za-z0-9_-]{1,200})\.(.+)$/.exec(ref);
+    // Refs from before albums were collections have no album: they belong to the first chosen album.
+    const c = await this.collection(caller, m ? Buffer.from(m[1]!, "base64url").toString("utf8") : undefined);
+    const photo = m ? m[2]! : ref;
+    if (photo.length > 300) throw badRequest("Invalid reference");
+    const r = await this.sidecar(`/content?user=${this.uid(caller.sub)}&album=${encodeURIComponent(c.album)}&ref=${encodeURIComponent(photo)}`);
     const bytes = Buffer.from(await r.arrayBuffer());
     if (bytes.length > this.maxBytes) throw new HttpError(413, "too_large", "This photo is too large");
-    const m = /filename="([^"]*)"/.exec(r.headers.get("content-disposition") ?? "");
-    return { bytes, name: m?.[1] ?? "photo.jpg" };
+    const n = /filename="([^"]*)"/.exec(r.headers.get("content-disposition") ?? "");
+    return { bytes, name: n?.[1] ?? "photo.jpg" };
   }
 }

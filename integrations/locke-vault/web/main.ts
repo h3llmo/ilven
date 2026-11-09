@@ -332,7 +332,7 @@ $("searchForm").onsubmit = (e) => { e.preventDefault(); void search(); };
 $("moreResults").onclick = () => void search(true);
 
 // ---- Settings: experimental iCloud source (per user) and admin approvals ----
-type IcStatus = { access: "none" | "requested" | "granted" | "revoked"; connection: { state: string; appleId: string | null; message: string | null }; album: string | null };
+type IcStatus = { access: "none" | "requested" | "granted" | "revoked"; connection: { state: string; appleId: string | null; message: string | null }; albums: string[] };
 const X = `${A}/experimental/icloud`;
 const icMsg = (m: string) => ($("icMsg").textContent = m);
 
@@ -369,11 +369,9 @@ async function loadSettings() {
   $("icLogin").hidden = !["disconnected", "expired"].includes(c.state);
   $("ic2fa").hidden = c.state !== "needs_2fa";
   $("icDisconnect").hidden = !["connected", "needs_2fa", "expired"].includes(c.state);
-  $<HTMLInputElement>("icAlbum").value = st.album ?? "";
+  renderAlbums(st.albums, null);
   if (c.state === "connected") {
-    api<{ albums: string[] }>(auth, "GET", `${X}/albums`)
-      .then((r) => $("icAlbums").replaceChildren(...r.albums.map((a) => el("option", { value: a }))))
-      .catch(() => {});
+    api<{ albums: string[]; smart: string[] }>(auth, "GET", `${X}/albums`).then((r) => renderAlbums(st.albums, r)).catch((err) => icMsg(errMsg(err)));
   }
 }
 
@@ -402,11 +400,36 @@ $("icDisconnect").onclick = async () => {
   icMsg("Disconnected.");
   await loadSettings();
 };
+/** Ticked albums, as collection ids: "favorites", "hidden" or "a:<album name>". Chosen albums missing from iCloud stay listed. */
+function renderAlbums(chosen: string[], lib: { albums: string[]; smart: string[] } | null) {
+  const list = $("icAlbumList");
+  const smartLabels: Record<string, string> = { favorites: "♥ Favorites", hidden: "Hidden (photos you hid in Photos)" };
+  const ids = lib ? [...lib.smart.map((n) => n.toLowerCase()), ...lib.albums.map((n) => `a:${n}`)] : [];
+  for (const id of chosen) if (!ids.includes(id)) ids.push(id);
+  if (!ids.length) return;
+  // Favorites and Hidden first, then the ticked albums, then the rest (a library can have hundreds).
+  const rank = (id: string) => (smartLabels[id] ? 0 : chosen.includes(id) ? 1 : 2);
+  ids.sort((x, y) => rank(x) - rank(y));
+  $("icAlbumFilter").hidden = ids.length < 12;
+  list.replaceChildren(...ids.map((id) => {
+    const box = el("input", { type: "checkbox", value: id, checked: chosen.includes(id) });
+    const missing = lib && !lib.smart.map((n) => n.toLowerCase()).includes(id) && !lib.albums.includes(id.slice(2));
+    return el("label", { className: "check" }, box, ` ${smartLabels[id] ?? id.slice(2)}${missing ? " (not found in iCloud)" : ""}`);
+  }));
+}
+$("icAlbumFilter").oninput = () => {
+  const q = $<HTMLInputElement>("icAlbumFilter").value.trim().toLowerCase();
+  for (const l of $("icAlbumList").querySelectorAll<HTMLLabelElement>("label")) {
+    const box = l.querySelector("input")!;
+    l.hidden = !!q && !box.checked && !(l.textContent ?? "").toLowerCase().includes(q);
+  }
+};
 $("icAlbumForm").onsubmit = async (e) => {
   e.preventDefault();
+  const collections = [...$("icAlbumList").querySelectorAll<HTMLInputElement>("input:checked")].map((b) => b.value);
   try {
-    await api(auth, "PUT", `${X}/album`, { album: $<HTMLInputElement>("icAlbum").value });
-    icMsg("Album saved. Find its photos in Sources → iCloud Photos.");
+    await api(auth, "PUT", `${X}/albums`, { collections });
+    icMsg(collections.length ? "Albums saved. Find their photos in Sources → iCloud Photos." : "No album is read any more.");
   } catch (err) { icMsg(errMsg(err)); }
 };
 

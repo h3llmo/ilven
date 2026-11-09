@@ -274,6 +274,8 @@ def disconnect(b: UserBody):
     user = check_user(b.user)
     sessions.drop(user)
     store.delete(user)
+    for k in [k for k in listings if k[0] == user]:
+        listings.pop(k, None)
     return {"state": "disconnected"}
 
 
@@ -293,13 +295,19 @@ def status(user: str):
     return {"state": "connected", "appleId": mask(s.apple_id)}
 
 
+# Smart albums the vault offers next to the user's own albums. Others (Library, Videos, Recently Deleted…) are not.
+SMART = ("Favorites", "Hidden")
+NOT_USER_ALBUMS = {"Library", "All Photos", "Bursts", "Favorites", "Hidden", "Live", "Panoramas", "Recently Deleted",
+                   "Screenshots", "Slo-mo", "Time-lapse", "Videos", "Portrait", "Long Exposure", "Animated", "Selfies"}
+
+
 @app.get("/albums")
 def albums(user: str):
     s = sessions.get(check_user(user))
     with s.lock:
         # Always re-read: the user may have created the album after connecting (pyicloud caches the list).
-        names = sorted({a.name for a in _refresh_albums(s.api.photos) if getattr(a, "name", None)})
-    return {"albums": names}
+        names = sorted({a.name for a in _refresh_albums(s.api.photos) if getattr(a, "name", None)} - NOT_USER_ALBUMS, key=str.casefold)
+    return {"albums": names, "smart": list(SMART)}
 
 
 def _refresh_albums(photos):
@@ -317,6 +325,11 @@ def _find(albums, name: str):
 
 
 def _album(s: Session, name: str):
+    if name in SMART:
+        album = s.api.photos.albums.find(name)
+        if album is None:
+            raise HTTPException(404, {"error": "album_not_found", "message": f"iCloud doesn't offer the {name} album for this library"})
+        return album
     album = _find(s.api.photos.albums, name)
     if album is None:  # created since the list was cached: re-read it once
         album = _find(_refresh_albums(s.api.photos), name)
@@ -331,6 +344,63 @@ def _iso(d: datetime | None) -> str | None:
     if d.tzinfo is None:
         d = d.replace(tzinfo=timezone.utc)
     return d.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+LISTING_TTL = 120  # seconds a listing is reused (paging, workflow scans)
+LISTING_MAX = 10_000  # photos listed per album at most
+
+
+class Listing:
+    """One pass over an album, kept briefly: pages are served from it instead of re-reading the album from Apple for
+    each page (Apple lists album photos by date taken, so a photo added today may sit anywhere in the list)."""
+
+    def __init__(self, album) -> None:
+        self.created = time.monotonic()
+        self.it = iter(album.photos)
+        self.items: list[dict[str, Any]] = []
+        self.photos: dict[str, Any] = {}
+        self.done = False
+
+    def fresh(self) -> bool:
+        return time.monotonic() - self.created < LISTING_TTL
+
+    def upto(self, n: int) -> None:
+        while not self.done and len(self.items) < min(n, LISTING_MAX):
+            photo = next(self.it, None)
+            if photo is None:
+                self.done = True
+                break
+            if photo.item_type != "image":
+                continue
+            taken = photo.asset_date
+            if taken is not None and taken.tzinfo is None:
+                taken = taken.replace(tzinfo=timezone.utc)
+            self.photos[photo.id] = photo
+            self.items.append({
+                "ref": photo.id,
+                "name": re.sub(r"\.(heic|heif)$", ".jpg", photo.filename, flags=re.I),
+                "contentType": "image/jpeg",
+                **({"size": photo.size} if photo.size else {}),
+                **({"date": _iso(taken)} if taken else {}),
+                "_taken": taken,
+            })
+        if len(self.items) >= LISTING_MAX:
+            self.done = True
+
+
+listings: dict[tuple[str, str], Listing] = {}
+
+
+def listing(s: Session, name: str, reuse: bool = True) -> Listing:
+    key = (s.user, name)
+    cur = listings.get(key)
+    if reuse and cur and cur.fresh():
+        return cur
+    for k, v in list(listings.items()):
+        if not v.fresh():
+            listings.pop(k, None)
+    cur = listings[key] = Listing(_album(s, name))
+    return cur
 
 
 class QueryBody(BaseModel):
@@ -351,33 +421,24 @@ def query(b: QueryBody):
     hi = datetime.fromisoformat(b.to.replace("Z", "+00:00")) if b.to else None
     text = (b.text or "").lower()
     items: list[dict[str, Any]] = []
-    position = 0
     next_cursor = None
     with s.lock:
-        for photo in _album(s, b.album).photos:
-            position += 1
-            if position <= start:
+        # A first page reads the album afresh; later pages continue the same listing.
+        lst = listing(s, b.album, reuse=start > 0)
+        i = start
+        while True:
+            lst.upto(i + 1)
+            if i >= len(lst.items):
+                break
+            it = lst.items[i]
+            i += 1
+            taken = it["_taken"]
+            if (lo and taken and taken < lo) or (hi and taken and taken > hi) or (text and text not in it["name"].lower()):
                 continue
-            if photo.item_type != "image":
-                continue
-            taken = photo.asset_date
-            if taken is not None and taken.tzinfo is None:
-                taken = taken.replace(tzinfo=timezone.utc)
-            if lo and taken and taken < lo:
-                continue
-            if hi and taken and taken > hi:
-                continue
-            if text and text not in photo.filename.lower():
-                continue
-            items.append({
-                "ref": photo.id,
-                "name": re.sub(r"\.(heic|heif)$", ".jpg", photo.filename, flags=re.I),
-                "contentType": "image/jpeg",
-                **({"size": photo.size} if photo.size else {}),
-                **({"date": _iso(taken)} if taken else {}),
-            })
+            items.append({k: v for k, v in it.items() if not k.startswith("_")})
             if len(items) >= b.limit:
-                next_cursor = str(position)
+                lst.upto(i + 1)
+                next_cursor = str(i) if i < len(lst.items) else None
                 break
     return {"items": items, "cursor": next_cursor}
 
@@ -399,7 +460,10 @@ def content(user: str, album: str, ref: str):
         raise HTTPException(404, {"error": "not_found", "message": "Photo not found"})
     s = sessions.get(check_user(user))
     with s.lock:
-        photo = _album(s, album).get(ref)
+        cached = listings.get((s.user, album))
+        photo = cached.photos.get(ref) if cached else None
+        if photo is None:
+            photo = _album(s, album).get(ref)
         if photo is None or photo.item_type != "image":
             raise HTTPException(404, {"error": "not_found", "message": "Photo not found in this album"})
         if photo.size and photo.size > MAX_BYTES * 2:

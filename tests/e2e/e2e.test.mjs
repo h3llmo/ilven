@@ -418,7 +418,7 @@ test("vault: experimental iCloud source is off by default, per user, admin-appro
   assert.equal(src.status, "not_allowed");
   assert.equal((await call(alice, "POST", `${V}/sources/icloud/query`, {})).status, 403);
   assert.equal((await call(alice, "POST", `${X}/connect`, { appleId: "a@example.com", password: "x" })).status, 403);
-  assert.equal((await call(alice, "PUT", `${X}/album`, { album: "Locke" })).status, 403);
+  assert.equal((await call(alice, "PUT", `${X}/albums`, { collections: ["a:Locke"] })).status, 403);
 
   // Another user's access (the deployment's real admin may have enabled iCloud for themselves): must not change.
   const adminAccess = async () => (await call(admin, "GET", X)).data.access;
@@ -437,9 +437,18 @@ test("vault: experimental iCloud source is off by default, per user, admin-appro
   assert.equal(st.access, "granted");
   assert.equal(st.connection.state, "disconnected", "sidecar reachable from the vault, nothing connected yet");
   assert.equal(await adminAccess(), adminBefore, "granting alice doesn't change another user's access");
+  await call(alice, "PUT", `${X}/albums`, { collections: [] });
   assert.equal((await call(alice, "POST", `${V}/sources/icloud/query`, {})).status, 409, "needs an album first");
-  assert.equal((await call(alice, "PUT", `${X}/album`, { album: "Locke" })).data.album, "Locke");
-  assert.equal((await call(alice, "GET", `${V}/sources`)).data.sources.find((s) => s.id === "icloud").status, "needs_setup", "not connected yet");
+  // Several albums, Favorites and Hidden: each a collection; nothing else can be read.
+  assert.equal((await call(alice, "PUT", `${X}/albums`, { collections: ["nope"] })).status, 400);
+  assert.deepEqual((await call(alice, "PUT", `${X}/albums`, { collections: ["a:Locke", "favorites", "hidden", "a:Upscale"] })).data.albums, ["a:Locke", "favorites", "hidden", "a:Upscale"]);
+  const ic = (await call(alice, "GET", `${V}/sources`)).data.sources.find((s) => s.id === "icloud");
+  assert.equal(ic.status, "needs_setup", "not connected yet");
+  assert.equal(ic.filters.collection, true);
+  assert.equal(ic.allCollections, false);
+  assert.deepEqual(ic.collections, [{ id: "a:Locke", name: "Locke" }, { id: "favorites", name: "Favorites" }, { id: "hidden", name: "Hidden" }, { id: "a:Upscale", name: "Upscale" }]);
+  assert.equal((await call(alice, "POST", `${V}/sources/icloud/query`, { collection: "a:Holidays" })).status, 404, "an album not chosen can't be read");
+  assert.equal((await call(alice, "GET", `${V}/sources/icloud/items/${"c." + Buffer.from("a:Holidays").toString("base64url") + ".p1"}/content`)).status, 404, "nor a photo from it");
   const q = await call(alice, "POST", `${V}/sources/icloud/query`, {});
   assert.equal(q.status, 409);
   assert.equal(q.data.error, "not_connected");

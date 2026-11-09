@@ -151,7 +151,7 @@ web.post(`${X}/connect`, async (req) => {
 web.post(`${X}/verify`, async (req) => needIcloud().verify(await auth(req), z.object({ code: z.string().regex(/^\d{6}$/) }).parse(req.body).code));
 web.post(`${X}/disconnect`, async (req) => needIcloud().disconnect(await auth(req)));
 web.get(`${X}/albums`, async (req) => needIcloud().albums(await auth(req)));
-web.put(`${X}/album`, async (req) => needIcloud().setAlbum(await auth(req), z.object({ album: z.string().trim().min(1).max(200) }).parse(req.body).album));
+web.put(`${X}/albums`, async (req) => needIcloud().setAlbums(await auth(req), z.object({ collections: z.array(z.string().min(1).max(100)).max(50) }).parse(req.body).collections));
 web.get(`${A}/admin/experimental`, async (req) => {
   requireAdmin(await auth(req));
   return { icloud: await needIcloud().listAccess() };

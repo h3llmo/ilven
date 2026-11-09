@@ -71,5 +71,83 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.c.get("/status?user=../../etc", headers=h).status_code, 400)
 
 
+class FakePhoto:
+    def __init__(self, i, kind="image"):
+        from datetime import datetime, timedelta
+        self.id = f"p{i}"
+        self.item_type = kind
+        self.filename = f"IMG_{i}.HEIC"
+        self.size = 1000
+        self.asset_date = datetime(2020, 1, 1) + timedelta(days=i)
+
+
+class FakeAlbums(list):
+    def find(self, name):
+        return next((a for a in self if a.name == name), None)
+
+
+class FakeAlbum:
+    def __init__(self, name, photos):
+        self.name = name
+        self._photos = photos
+        self.reads = 0
+
+    @property
+    def photos(self):
+        self.reads += 1
+        return iter(self._photos)
+
+    def get(self, ref):
+        return next((p for p in self._photos if p.id == ref), None)
+
+
+class ListingTest(unittest.TestCase):
+    def setUp(self):
+        self.c = TestClient(sidecar.app)
+        self.h = {"x-vault-token": "t" * 64}
+        photos = [FakePhoto(i, "video" if i % 10 == 9 else "image") for i in range(250)]
+        self.locke = FakeAlbum("Locke", photos)
+        self.fav = FakeAlbum("Favorites", photos[:5])
+        self.hidden = FakeAlbum("Hidden", photos[5:7])
+        albums = FakeAlbums([self.locke, self.fav, self.hidden, FakeAlbum("Library", photos), FakeAlbum("Recently Deleted", [])])
+
+        class Api:
+            class photos:
+                pass
+        Api.photos.albums = albums
+        sess = sidecar.Session(USER, "me@example.com")
+        sess.api = Api
+        self._get = sidecar.sessions.get
+        sidecar.sessions.get = lambda user: sess
+        sidecar.listings.clear()
+
+    def tearDown(self):
+        sidecar.sessions.get = self._get
+
+    def test_albums_lists_user_albums_and_the_offered_smart_ones(self):
+        r = self.c.get(f"/albums?user={USER}", headers=self.h).json()
+        self.assertEqual(r, {"albums": ["Locke"], "smart": ["Favorites", "Hidden"]})
+
+    def test_pages_come_from_one_pass_over_the_album(self):
+        seen, cursor = [], None
+        while True:
+            r = self.c.post("/query", headers=self.h, json={"user": USER, "album": "Locke", "limit": 100, **({"cursor": cursor} if cursor else {})}).json()
+            seen += [i["ref"] for i in r["items"]]
+            cursor = r["cursor"]
+            if not cursor:
+                break
+        self.assertEqual(len(seen), 225, "videos skipped, every image once")
+        self.assertEqual(len(set(seen)), 225)
+        self.assertEqual(self.locke.reads, 1, "the album was read once for all pages")
+        # A new first page reads the album again (photos may have been added).
+        self.c.post("/query", headers=self.h, json={"user": USER, "album": "Locke", "limit": 10})
+        self.assertEqual(self.locke.reads, 2)
+
+    def test_smart_albums_by_name(self):
+        r = self.c.post("/query", headers=self.h, json={"user": USER, "album": "Hidden"}).json()
+        self.assertEqual([i["ref"] for i in r["items"]], ["p5", "p6"])
+        self.assertEqual(self.c.post("/query", headers=self.h, json={"user": USER, "album": "Nope"}).status_code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()

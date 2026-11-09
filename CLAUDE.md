@@ -319,8 +319,11 @@ Integration `integrations/locke-vault/`: middleware between Locke (and other app
 - **Versions are linear** (decided 2026-11-08, no alternatives): a workflow chains enhance → face swap → background
   blur (last). If the user doesn't like a step, they roll back: the latest version is deleted by its number (viewer
   "Undo last step"; API `DELETE items/:id/versions/:n`), so a version added meanwhile is never the one removed.
-- **iCloud Photos (EXPERIMENTAL, 2026-11-07):** sidecar `locke-vault-icloud` (Python, `pyicloud` timlaing fork) reads one
-  album chosen by each user (e.g. "Locke"). Off for everyone: users request access in the vault settings, a vault admin
+- **iCloud Photos (EXPERIMENTAL, 2026-11-07):** sidecar `locke-vault-icloud` (Python, `pyicloud` timlaing fork) reads only
+  the albums each user ticks (2026-11-09: several albums plus the smart albums Favorites and Hidden, each a collection
+  `a:<name>` / `favorites` / `hidden`; refs carry their collection, so nothing outside the ticked albums can be read;
+  `allCollections: false` in the source info: a query without a collection reads the first ticked album). Album listings
+  are one pass per album, cached 2 minutes for paging; workflows list whole albums every 5 minutes and remember refs. Off for everyone: users request access in the vault settings, a vault admin
   (Ilven admin) approves/revokes. Each user connects their own Apple ID (password used once, never stored; 2FA in the
   UI); the trusted Apple session is AES-GCM encrypted on the sidecar's volume, keyed by an opaque HMAC of the user's
   `sub`. Apple credentials only via the interactive UI (never API keys/connexes). The sidecar sits on a private network

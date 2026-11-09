@@ -48,7 +48,7 @@
     <section id="settings" hidden>
       <div class="card">
         <h2>iCloud Photos <span class="badge exp">experimental</span></h2>
-        <p class="muted">Lets the vault read the photos of one album in your iCloud library (for example an album named "Locke"),
+        <p class="muted">Lets the vault read the photos of the albums you choose in your iCloud library (for example an album named "Locke"),
           so you can stage them here. It uses Apple's private web access: you sign in with your Apple ID once, your password
           is never stored, and the Apple session is kept encrypted. It may stop working when Apple changes things, and it
           can't work if Advanced Data Protection is on for your account. Only users approved by an administrator can use it.</p>
@@ -66,11 +66,13 @@
             <button>Verify</button>
           </form>
           <button id="icDisconnect" class="secondary danger" hidden>Disconnect</button>
-          <h3>Album</h3>
-          <form id="icAlbumForm" class="row">
-            <input id="icAlbum" list="icAlbums" placeholder="Locke" aria-label="Album name" required />
-            <datalist id="icAlbums"></datalist>
-            <button>Save album</button>
+          <h3>Albums</h3>
+          <form id="icAlbumForm">
+            <p class="muted">Only the albums you tick are read. Each one is a separate collection, so Locke can run a
+              different workflow on each (for example "Enhance" for one album, face swap for another).</p>
+            <input id="icAlbumFilter" type="search" placeholder="Find an album" aria-label="Find an album" hidden />
+            <div id="icAlbumList" class="checks"><p class="muted">Connect your Apple account to list your albums.</p></div>
+            <button>Save albums</button>
           </form>
           <p id="icMsg" class="muted"></p>
         </div>

@@ -64,6 +64,8 @@ export const sourceInfoSchema = z.object({
       addedAfter: z.boolean().default(false),
     })
     .default(NO_FILTERS),
+  /** false: a query without `collection` doesn't cover every collection (iCloud: it reads the first chosen album). */
+  allCollections: z.boolean().default(true),
   /** This user's collections (filter `collection`). */
   collections: z.array(z.object({ id: z.string().min(1).max(100), name: z.string().max(120) })).max(200).default([]),
 });
@@ -155,6 +157,7 @@ export class DmsSource implements DataSource {
       description: "Files saved in your Ilven document store (Nevli-DMS).",
       status: "ready",
       experimental: false,
+      allCollections: true,
       filters: { text: true, dateRange: true, favorite: false, collection: true, addedAfter: true },
       collections: apps.map((a) => ({ id: a, name: `Saved by ${a}` })),
     };
