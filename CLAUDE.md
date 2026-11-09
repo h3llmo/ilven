@@ -186,6 +186,7 @@ Nevli MCP `restart_service` → Docker (through the socket proxy).
 | Operator AI key(s): Anthropic / OpenAI / Gemini | Operator | Nevli (encrypted) | Running Ilven-AI itself |
 | Ilven API key | User (issued by Nevli) | Nevli (hashed) | Connexes to Ilven-Apps |
 | App's third-party credentials (e.g. user's OpenAI key in Pilot) | User / app | The app (encrypted) | The app's own business. Outside Ilven. |
+| Delegated key (one per user × app) | User, held by the app | Nevli (hashed); the app (encrypted) | An app acting for the user while they're away (e.g. Locke workflows), only at the services in its audience |
 
 ## 8. Environments
 
@@ -342,6 +343,18 @@ admin token: it applies the layout (`GARAGE_CAPACITY_BYTES`) and, on `POST /inte
 (registered app's own secret; platform apps refused), creates bucket `app-<id>` and an S3 key derived from Nevli's
 master key, then returns endpoint, bucket and credentials. Apps store their own business objects there (Locke: sealed
 job inputs/results); what they put in is theirs to encrypt. e2e: "object storage" test.
+
+### Delegated keys (2026-11-09, decided by the user)
+For apps that act for a user while the user is away (Locke's automated workflows read vault sources and save to the
+vault). `POST /internal/apps/delegations` (app secret **and** the user's live IdP token, forwarded from the user's
+request) issues an `ilv_` key for (user, app), returned once; Nevli keeps only a keyed hash (table `delegated_keys`).
+One active key per (user, app); a new one revokes the old. **Audience:** the key is valid only at the services listed
+(never `nevli` or `ilven-ai`); services name themselves in `createCallerAuthenticator({ service })` (`dms`,
+`locke-vault`, `locke`), and a service without a name accepts users' own API keys only. Delegated keys never work for
+connexes, Nevli's MCP or the vault's MCP. Users see and revoke them in Ilven Account ("Apps acting for you",
+`/nevli/api/me/delegations`); apps revoke theirs with `/internal/apps/delegations/revoke`. Revocation can lag by the
+30 s verification cache. Account deletion cascades. e2e: "delegated keys" test; full flow in Locke's
+`test/e2e-features.mjs`.
 
 ### Decisions taken during Phase 0 [TBC — confirm or change]
 1. **Ilven API key storage (§6):** verified by keyed hash (HMAC-SHA256); an AES-256-GCM sealed copy is also kept

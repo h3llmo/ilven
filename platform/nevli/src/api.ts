@@ -5,6 +5,7 @@ import { GENDERS, type Actor, type Ctx } from "./context.ts";
 import { ops, requireAdmin, type Op } from "./ops.ts";
 import { listConnexes } from "./services/connexes.ts";
 import { issueApiKey } from "./services/keys.ts";
+import { listDelegations, revokeDelegation } from "./services/delegations.ts";
 import { describeUser, registerUser, syncAdminFlag, updateProfile, userBySub, deleteUser } from "./services/users.ts";
 import { buildOpenApi } from "./openapi.ts";
 
@@ -66,6 +67,18 @@ export function registerPublicApi(app: FastifyInstance, ctx: Ctx) {
     const u = await registered(await identify(req));
     const k = await issueApiKey(ctx, u.id);
     return { prefix: k.prefix };
+  });
+
+  // Apps acting for the user while they're away (delegated keys). The user can revoke any of them.
+  app.get(`${PREFIX}/me/delegations`, async (req) => {
+    const u = await registered(await identify(req));
+    return listDelegations(ctx, u.id);
+  });
+  app.delete(`${PREFIX}/me/delegations/:id`, async (req) => {
+    const u = await registered(await identify(req));
+    const { id } = z.object({ id: z.uuid() }).parse(req.params);
+    if (!(await revokeDelegation(ctx, u.id, id))) throw notFound("No such app access");
+    return { revoked: true };
   });
 
   app.get(`${PREFIX}/me/connexes`, async (req) => {

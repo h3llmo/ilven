@@ -10,7 +10,8 @@ import { garageConfig, provisionAppStorage, StorageUnavailable } from "./service
 import { unsealApiKey, verifyApiKey } from "./services/keys.ts";
 import { activeProvider, aiEnabled } from "./services/providers.ts";
 import { userBySub } from "./services/users.ts";
-import { bearer } from "@ilven/common";
+import { checkAudience, issueDelegatedKey, revokeAppDelegation, verifyDelegatedKey } from "./services/delegations.ts";
+import { bearer, createIdentityVerifier } from "@ilven/common";
 
 /** The Nevli tools as Nevli lists them on its own MCP server (used for self-registration). */
 export function nevliTools(): AppTool[] {
@@ -32,11 +33,44 @@ export function registerInternalApi(app: FastifyInstance, ctx: Ctx, internalToke
   };
 
   // Apps and platform services verify an Ilven API key and learn which user it belongs to.
+  // `service` names the verifying service: delegated keys are only valid at the services in their audience.
   app.post("/internal/api-keys/verify", async (req, reply) => {
-    const { key } = z.object({ key: z.string().max(200) }).parse(req.body);
+    const { key, service } = z.object({ key: z.string().max(200), service: z.string().max(40).optional() }).parse(req.body);
     const r = await verifyApiKey(ctx, key);
-    if (!r) return reply.status(404).send({ error: "not_found", message: "Unknown or revoked key" });
-    return { userId: r.userId, sub: r.sub };
+    if (r) return { userId: r.userId, sub: r.sub };
+    const d = await verifyDelegatedKey(ctx, key, service);
+    if (d) return d;
+    return reply.status(404).send({ error: "not_found", message: "Unknown or revoked key" });
+  });
+
+  // An app gets a delegated key to act for a user while they're away (§6). Needs the app's own secret AND the
+  // user's live login (their IdP token, forwarded by the app from the user's request): the user is present and asked.
+  const idp = createIdentityVerifier();
+  const appAuth = { id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/), secret: z.string().min(32).max(200) };
+  app.post("/internal/apps/delegations", async (req, reply) => {
+    const b = z.object({
+      ...appAuth,
+      userToken: z.string().min(1).max(8000),
+      audience: z.array(z.string().max(40)).min(1).max(10),
+      purpose: z.string().trim().min(1).max(120),
+    }).parse(req.body);
+    if (!(await verifyAppSecret(ctx, b.id, b.secret))) throw unauthorized("Unknown app or wrong app secret");
+    const bad = checkAudience(b.audience);
+    if (bad) return reply.status(400).send({ error: "invalid_audience", message: bad });
+    let sub: string;
+    try { sub = (await idp.verify(b.userToken)).sub; } catch { throw unauthorized("The user's login is invalid or expired"); }
+    const user = await userBySub(ctx, sub);
+    if (!user) return reply.status(404).send({ error: "not_registered", message: "Not registered with Ilven" });
+    const k = await issueDelegatedKey(ctx, user.id, b.id, b.audience, b.purpose);
+    return reply.status(201).send({ id: k.id, key: k.key, prefix: k.prefix, sub });
+  });
+
+  // The app gives up its key for a user (e.g. the user turned automation off).
+  app.post("/internal/apps/delegations/revoke", async (req) => {
+    const b = z.object({ ...appAuth, sub: z.string().min(1).max(200) }).parse(req.body);
+    if (!(await verifyAppSecret(ctx, b.id, b.secret))) throw unauthorized("Unknown app or wrong app secret");
+    const user = await userBySub(ctx, b.sub);
+    return { revoked: user ? await revokeAppDelegation(ctx, user.id, b.id) : false };
   });
 
   // Integrations register themselves at startup. Re-registration requires the same app secret (TOFU).

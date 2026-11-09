@@ -7,6 +7,7 @@ type Gender = "female" | "male" | "non_binary" | "other";
 type Me = { registered: boolean; isAdmin: boolean; user?: { id: string; planId: string; profile: { birthYear: number | null; gender: Gender | null }; apiKey: { prefix: string; createdAt: string } | null } };
 type Plan = { id: string; name: string; description: string };
 type Connex = { appId: string; appName: string; presetName: string | null; allowedToolCount: number };
+type Delegation = { id: string; appId: string; appName: string; purpose: string; audience: string[]; prefix: string; createdAt: string; lastUsedAt: string | null };
 
 const GENDERS: { v: Gender; l: string }[] = [
   { v: "female", l: "Female" }, { v: "male", l: "Male" }, { v: "non_binary", l: "Non-binary" }, { v: "other", l: "Other" },
@@ -114,7 +115,9 @@ function Settings({ auth, me, reload }: { auth: IlvenAuth; me: Me; reload: () =>
   const s = useSharing(u.profile);
   const [msg, setMsg] = useState("");
   const [connexes, setConnexes] = useState<Connex[]>([]);
-  useEffect(() => { void api<Connex[]>(auth, "GET", "/nevli/api/me/connexes").then(setConnexes); }, [auth, me]);
+  const [delegations, setDelegations] = useState<Delegation[]>([]);
+  const loadDelegations = () => void api<Delegation[]>(auth, "GET", "/nevli/api/me/delegations").then(setDelegations);
+  useEffect(() => { void api<Connex[]>(auth, "GET", "/nevli/api/me/connexes").then(setConnexes); loadDelegations(); }, [auth, me]); // eslint-disable-line react-hooks/exhaustive-deps
   const r = returnUrl();
   return (
     <>
@@ -148,8 +151,27 @@ function Settings({ auth, me, reload }: { auth: IlvenAuth; me: Me; reload: () =>
         </table>
       </section>
       <section className="card">
+        <h2>Apps acting for you while you're away</h2>
+        <p className="muted">Keys you gave an app (for example Locke's automated workflows). Each works only at the services listed, never for the assistant. Revoking one stops that app's automations at once; the app asks again next time you turn them on.</p>
+        {delegations.length === 0 ? <p className="muted">None.</p> : (
+          <table><thead><tr><th>App</th><th>For</th><th>Can reach</th><th>Last used</th><th /></tr></thead>
+            <tbody>{delegations.map((d) => (
+              <tr key={d.id}>
+                <td>{d.appName}</td><td>{d.purpose}</td><td>{d.audience.join(", ")}</td>
+                <td>{d.lastUsedAt ? new Date(d.lastUsedAt).toLocaleString() : "never"}</td>
+                <td><button className="secondary" onClick={async () => {
+                  if (!confirm(`Revoke ${d.appName}'s access? Its automations stop until you allow it again.`)) return;
+                  await api(auth, "DELETE", `/nevli/api/me/delegations/${d.id}`);
+                  loadDelegations();
+                }}>Revoke</button></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        )}
+      </section>
+      <section className="card">
         <h2>Delete Ilven account</h2>
-        <p className="muted">Removes your Ilven user, API key, connexes and shared profile data. Your login and your data inside apps are not affected.</p>
+        <p className="muted">Removes your Ilven user, API key, connexes, apps' access and shared profile data. Your login and your data inside apps are not affected.</p>
         <button className="danger" onClick={async () => {
           if (!confirm("Delete your Ilven account?")) return;
           await api(auth, "DELETE", "/nevli/api/me");

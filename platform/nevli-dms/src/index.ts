@@ -35,7 +35,7 @@ await migrate(db, [
 ]);
 await mkdir(join(DATA, "files"), { recursive: true });
 
-const authenticate = createCallerAuthenticator({ allowApiKey: true });
+const authenticate = createCallerAuthenticator({ allowApiKey: true, service: "dms" });
 const app = createServer();
 // Every upload body is raw bytes, whatever its content type (no JSON/text parsing).
 app.removeAllContentTypeParsers();

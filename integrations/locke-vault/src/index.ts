@@ -62,7 +62,7 @@ function sendFile(reply: FastifyReply, bytes: Buffer, type: string, name: string
 
 // ---------- REST: the viewer (user's IdP token) and Locke's back-end (the user's credential, conventional calls) ----------
 const web = createServer();
-const auth = createCallerAuthenticator({ allowApiKey: true });
+const auth = createCallerAuthenticator({ allowApiKey: true, service: "locke-vault" });
 web.addContentTypeParser(["application/octet-stream", "application/pdf"], { parseAs: "buffer", bodyLimit: MAX_FILE + 1024 }, (_r, b, done) => done(null, b));
 web.addContentTypeParser(/^image\//, { parseAs: "buffer", bodyLimit: MAX_FILE + 1024 }, (_r, b, done) => done(null, b));
 const body = (b: unknown) => {
@@ -172,7 +172,8 @@ mountMcp(mcp, "/mcp", async (req) => {
   // Listing tools needs no credential (Nevli discovery). Every call needs a valid Ilven API key.
   const caller = req.headers.authorization ? await auth(req).catch(() => null) : null;
   const need = () => {
-    if (!caller || caller.kind !== "apiKey") throw unauthorized("An Ilven API key is required");
+    // Connexes only: an app's delegated key (automation) uses the REST API, never the assistant's tools.
+    if (!caller || caller.kind !== "apiKey" || caller.delegatedTo) throw unauthorized("An Ilven API key is required");
     return caller;
   };
   const brief = (i: Awaited<ReturnType<typeof getItem>>) => ({

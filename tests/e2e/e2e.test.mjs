@@ -236,6 +236,23 @@ test("object storage: Garage is private; apps get their bucket from Nevli with t
   assert.ok([401, 403].includes(s3.status), `anonymous S3: ${s3.status}`);
 });
 
+test("delegated keys: issued only to a registered app with the user's live login; listed and revocable by the user", async () => {
+  const internal = (path, body) => fetch(`${NEVLI_INTERNAL}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const me = await call(alice, "GET", "/nevli/api/me");
+  if (!me.data.registered) await call(alice, "POST", "/nevli/api/me/register", { birthYear: null, gender: null, planId: "free" });
+  const issue = (b) => internal("/internal/apps/delegations", { id: "locke-vault", secret: "x".repeat(40), userToken: alice, audience: ["locke-vault"], purpose: "test", ...b });
+  assert.equal((await issue({})).status, 401, "wrong app secret");
+  assert.equal((await issue({ id: "no-such-app" })).status, 401, "unknown app");
+  assert.equal((await internal("/internal/apps/delegations/revoke", { id: "locke-vault", secret: "x".repeat(40), sub: "x" })).status, 401);
+  // Unknown keys are refused whatever the verifying service.
+  assert.equal((await internal("/internal/api-keys/verify", { key: "ilv_" + "a".repeat(43), service: "locke-vault" })).status, 404);
+  const list = await call(alice, "GET", "/nevli/api/me/delegations");
+  assert.equal(list.status, 200);
+  assert.ok(Array.isArray(list.data));
+  assert.equal((await call(alice, "DELETE", "/nevli/api/me/delegations/00000000-0000-4000-8000-000000000000")).status, 404);
+  assert.equal((await call(null, "GET", "/nevli/api/me/delegations")).status, 401);
+});
+
 test("vault: registered with Nevli, MCP tools discovered, viewer served, MCP needs an API key", async () => {
   await until("vault registered", async () => (await call(null, "GET", "/nevli/api/apps")).data.some?.((a) => a.id === "locke-vault"));
   const vault = (await call(admin, "GET", "/nevli/api/admin/apps")).data.find((a) => a.id === "locke-vault");
@@ -319,7 +336,8 @@ test("vault: read-only data sources (DMS built in, Pilot over the source contrac
   const p = await pRes.json();
   try {
     const list = (await call(alice, "GET", `${V}/sources`)).data.sources;
-    assert.deepEqual(list.map((s) => [s.id, s.available]).sort(), [["dms", true], ["icloud", true], ["pilot", true]]);
+    // Built in and default sources; a deployment may add others (e.g. Locke from another repository).
+    for (const id of ["dms", "icloud", "pilot"]) assert.equal(list.find((s) => s.id === id)?.available, true, `source ${id}`);
 
     const dq = await call(alice, "POST", `${V}/sources/dms/query`, { text: tag, limit: 10 });
     assert.equal(dq.status, 200, JSON.stringify(dq.data));

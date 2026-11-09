@@ -13,7 +13,7 @@ export interface Identity {
 /** Who is calling: a logged-in user (IdP token) or a connex acting with a user's Ilven API key. */
 export type Caller =
   | { kind: "identity"; sub: string; isAdmin: boolean; credential: string }
-  | { kind: "apiKey"; sub: string; userId: string; credential: string };
+  | { kind: "apiKey"; sub: string; userId: string; credential: string; delegatedTo?: string };
 
 export const API_KEY_PREFIX = "ilv_";
 export const isApiKey = (s: string) => s.startsWith(API_KEY_PREFIX);
@@ -68,20 +68,25 @@ export function bearer(req: FastifyRequest): string | undefined {
   return h?.startsWith("Bearer ") ? h.slice(7).trim() : undefined;
 }
 
-/** Verifies Ilven API keys against Nevli's internal endpoint. Results are cached briefly. */
-export function createApiKeyVerifier(nevliInternalUrl = env("NEVLI_INTERNAL_URL", "http://nevli:3001"), ttlMs = 30_000) {
-  const cache = new Map<string, { at: number; value: { userId: string; sub: string } | null }>();
-  return async (key: string): Promise<{ userId: string; sub: string } | null> => {
+/**
+ * Verifies Ilven API keys against Nevli's internal endpoint. Results are cached briefly.
+ * `service` names the verifying service: delegated keys (an app acting for a user while they're away) are only
+ * accepted by the services in their audience. Without a name, a service accepts users' own API keys only.
+ */
+export function createApiKeyVerifier(nevliInternalUrl = env("NEVLI_INTERNAL_URL", "http://nevli:3001"), ttlMs = 30_000, service?: string) {
+  type Verified = { userId: string; sub: string; delegatedTo?: string };
+  const cache = new Map<string, { at: number; value: Verified | null }>();
+  return async (key: string): Promise<Verified | null> => {
     const h = sha256Hex(key);
     const hit = cache.get(h);
     if (hit && Date.now() - hit.at < ttlMs) return hit.value;
     const res = await fetch(`${nevliInternalUrl}/internal/api-keys/verify`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ key }),
+      body: JSON.stringify(service ? { key, service } : { key }),
     });
     if (!res.ok && res.status !== 404) throw new Error(`API key verification failed: HTTP ${res.status}`);
-    const value = res.ok ? ((await res.json()) as { userId: string; sub: string }) : null;
+    const value = res.ok ? ((await res.json()) as Verified) : null;
     cache.set(h, { at: Date.now(), value });
     if (cache.size > 5000) cache.clear();
     return value;
@@ -92,16 +97,16 @@ export function createApiKeyVerifier(nevliInternalUrl = env("NEVLI_INTERNAL_URL"
  * Authenticates a request carrying either an IdP token or an Ilven API key.
  * Apps use this so the same resource checks apply to UI calls and to Ilven-AI calls through a connex.
  */
-export function createCallerAuthenticator(opts: { allowApiKey: boolean }) {
+export function createCallerAuthenticator(opts: { allowApiKey: boolean; service?: string }) {
   const idp = createIdentityVerifier();
-  const verifyKey = opts.allowApiKey ? createApiKeyVerifier() : undefined;
+  const verifyKey = opts.allowApiKey ? createApiKeyVerifier(undefined, undefined, opts.service) : undefined;
   return async (req: FastifyRequest): Promise<Caller> => {
     const b = bearer(req);
     if (b && isApiKey(b)) {
       if (!verifyKey) throw unauthorized("API keys are not accepted here");
       const r = await verifyKey(b);
       if (!r) throw unauthorized("Invalid API key");
-      return { kind: "apiKey", sub: r.sub, userId: r.userId, credential: b };
+      return { kind: "apiKey", sub: r.sub, userId: r.userId, credential: b, ...(r.delegatedTo ? { delegatedTo: r.delegatedTo } : {}) };
     }
     const token = idp.tokenFrom(req);
     if (!token) throw unauthorized();

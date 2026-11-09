@@ -104,4 +104,26 @@ ALTER TABLE presets ADD COLUMN topics text NOT NULL DEFAULT '';
 ALTER TABLE ai_providers ADD COLUMN guard_model text;
 `,
   },
+  {
+    id: "003_delegated_keys",
+    sql: `
+-- Delegated keys: an app acts for a user while the user is away (e.g. Locke's automated workflows reading vault
+-- sources). Issued only when the app presents its own secret AND the user's live login; one active key per
+-- (user, app); valid only at the services in its audience; revocable by the user in Ilven-Account.
+-- Never released again: only the keyed hash is stored here, the holder app keeps the key.
+CREATE TABLE delegated_keys (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id text NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  audience text[] NOT NULL,
+  purpose text NOT NULL,
+  prefix text NOT NULL,
+  key_hash text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  last_used_at timestamptz,
+  revoked_at timestamptz
+);
+CREATE UNIQUE INDEX delegated_keys_one_active ON delegated_keys(user_id, app_id) WHERE revoked_at IS NULL;
+`,
+  },
 ];
