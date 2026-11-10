@@ -5,6 +5,7 @@ import { z } from "zod";
 import { badRequest, HttpError, notFound, type Caller, type Db, type Sealer } from "@ilven/common";
 import { userKey, type UserKey } from "./crypto.ts";
 import { EXT, sniff, type Accepted } from "./sniff.ts";
+import { makePreview, PREVIEW_SIZES, PREVIEW_TYPE, type PreviewSize } from "./previews.ts";
 import type { SourceRegistry } from "./sources.ts";
 
 /**
@@ -58,6 +59,12 @@ export const MIGRATIONS = [
       created_at timestamptz NOT NULL DEFAULT now()
     );`,
   },
+  {
+    // Previews (thumb, display) stored next to each version, encrypted like it. NULL: not made yet (versions from
+    // before previews, made on first view); 0: the type can't be previewed (PDF, HEIC…).
+    id: "002_previews",
+    sql: "ALTER TABLE versions ADD COLUMN thumb_size bigint, ADD COLUMN display_size bigint;",
+  },
 ];
 
 export const label = z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,40}$/);
@@ -71,15 +78,21 @@ const aad = {
   item: (sub: string, id: string) => `item:${sub}:${id}`,
   version: (sub: string, id: string) => `version:${sub}:${id}`,
   blob: (sub: string, item: string, id: string) => `blob:${sub}:${item}:${id}`,
+  preview: (sub: string, item: string, id: string, size: PreviewSize) => `preview:${sub}:${item}:${id}:${size}`,
 };
 
 const blobPath = (ctx: VaultCtx, versionId: string) => join(ctx.dataDir, "blobs", versionId);
+const previewPath = (ctx: VaultCtx, versionId: string, size: PreviewSize) => `${blobPath(ctx, versionId)}.${size}`;
+/** Every file of a version: the original and its previews. */
+const versionFiles = (ctx: VaultCtx, versionId: string) => [blobPath(ctx, versionId), ...PREVIEW_SIZES.map((s) => previewPath(ctx, versionId, s))];
+/** Bytes a user's versions take, previews included. */
+const USED = "SELECT coalesce(sum(size + coalesce(thumb_size, 0) + coalesce(display_size, 0)), 0) AS used FROM versions WHERE owner_sub = $1";
 const uuidOr404 = (id: string, what = "Item") => {
   if (!z.uuid().safeParse(id).success) throw notFound(`${what} not found`);
 };
 
 export async function quota(ctx: VaultCtx, sub: string) {
-  const { rows } = await ctx.db.query<{ used: string }>("SELECT coalesce(sum(size), 0) AS used FROM versions WHERE owner_sub = $1", [sub]);
+  const { rows } = await ctx.db.query<{ used: string }>(USED, [sub]);
   return { used: Number(rows[0]!.used), limit: ctx.quotaBytes };
 }
 
@@ -105,14 +118,17 @@ async function storeVersion(
   meta: VersionMeta,
   parent: number | null,
 ) {
+  // Previews are made before the transaction (decoding takes a moment) and count in the quota with the original.
+  const previews = { thumb: await makePreview(bytes, type, "thumb"), display: await makePreview(bytes, type, "display") };
+  const extra = (previews.thumb?.length ?? 0) + (previews.display?.length ?? 0);
   const c = await ctx.db.connect();
   const versionId = randomUUID();
   const path = blobPath(ctx, versionId);
   try {
     await c.query("BEGIN");
     await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`vault:${sub}`]);
-    const used = Number((await c.query<{ used: string }>("SELECT coalesce(sum(size), 0) AS used FROM versions WHERE owner_sub = $1", [sub])).rows[0]!.used);
-    if (used + bytes.length > ctx.quotaBytes) {
+    const used = Number((await c.query<{ used: string }>(USED, [sub])).rows[0]!.used);
+    if (used + bytes.length + extra > ctx.quotaBytes) {
       const free = Math.max(0, ctx.quotaBytes - used);
       throw new HttpError(507, "vault_full", `Your vault is full (${mb(used)} of ${mb(ctx.quotaBytes)} used, ${mb(free)} free). Push or trash items to make room.`);
     }
@@ -133,17 +149,27 @@ async function storeVersion(
       await c.query("UPDATE items SET updated_at = now() WHERE id = $1", [item.id]);
     }
     await c.query(
-      "INSERT INTO versions (id, item_id, owner_sub, n, parent, content_type, size, sealed) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-      [versionId, item.id, sub, n, item.create ? null : (parent ?? n - 1), type, bytes.length, key.sealJson(meta, aad.version(sub, versionId))],
+      `INSERT INTO versions (id, item_id, owner_sub, n, parent, content_type, size, sealed, thumb_size, display_size)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [versionId, item.id, sub, n, item.create ? null : (parent ?? n - 1), type, bytes.length, key.sealJson(meta, aad.version(sub, versionId)),
+        previews.thumb?.length ?? 0, previews.display?.length ?? 0],
     );
     await writeFile(`${path}.part`, key.encrypt(bytes, aad.blob(sub, item.id, versionId)));
     await rename(`${path}.part`, path);
+    for (const size of PREVIEW_SIZES) {
+      const p = previews[size];
+      if (!p) continue;
+      await writeFile(`${previewPath(ctx, versionId, size)}.part`, key.encrypt(p, aad.preview(sub, item.id, versionId, size)));
+      await rename(`${previewPath(ctx, versionId, size)}.part`, previewPath(ctx, versionId, size));
+    }
     await c.query("COMMIT");
     return n;
   } catch (e) {
     await c.query("ROLLBACK").catch(() => {});
-    await rm(path, { force: true });
-    await rm(`${path}.part`, { force: true });
+    for (const f of versionFiles(ctx, versionId)) {
+      await rm(f, { force: true });
+      await rm(`${f}.part`, { force: true });
+    }
     throw e;
   } finally {
     c.release();
@@ -267,13 +293,62 @@ export async function versionContent(ctx: VaultCtx, caller: Caller, id: string, 
   return { bytes: key.decrypt(blob, aad.blob(caller.sub, id, v.id)), contentType: v.content_type, n: v.n, name: `${base}-v${v.n}.${EXT[v.content_type]}`, item };
 }
 
+const making = new Map<string, Promise<Buffer | null>>();
+
+/**
+ * A version's preview (`thumb` for grids, `display` for viewing), WebP. Versions stored before previews existed get
+ * theirs made on first view. Types that can't be previewed (PDF, HEIC…) answer with the original.
+ */
+export async function versionPreview(ctx: VaultCtx, caller: Caller, id: string, n: number | undefined, size: PreviewSize) {
+  uuidOr404(id);
+  const { rows } = await ctx.db.query<{ id: string; n: number; content_type: Accepted; thumb_size: string | null; display_size: string | null }>(
+    `SELECT v.id, v.n, v.content_type, v.thumb_size, v.display_size FROM versions v JOIN items i ON i.id = v.item_id
+     WHERE v.item_id = $1 AND i.owner_sub = $2 AND v.owner_sub = $2 AND ($3::int IS NULL OR v.n = $3) ORDER BY v.n DESC LIMIT 1`,
+    [id, caller.sub, n ?? null],
+  );
+  const v = rows[0];
+  if (!v) throw notFound("Version not found");
+  const stored = size === "thumb" ? v.thumb_size : v.display_size;
+  const key = await userKey(ctx.db, ctx.master, caller.sub);
+  const name = `preview-v${v.n}-${size}.webp`;
+  if (stored !== null && Number(stored) > 0) {
+    const blob = await readFile(previewPath(ctx, v.id, size)).catch(() => null);
+    if (blob) return { bytes: key.decrypt(blob, aad.preview(caller.sub, id, v.id, size)), contentType: PREVIEW_TYPE, name };
+  }
+  if (stored !== null && Number(stored) === 0) {
+    const o = await versionContent(ctx, caller, id, v.n);
+    return { bytes: o.bytes, contentType: o.contentType as string, name: o.name };
+  }
+  // Not made yet (or its file went missing): make it once, even if several requests ask at the same time.
+  const k = `${v.id}:${size}`;
+  let p = making.get(k);
+  if (!p) {
+    p = (async () => {
+      const o = await versionContent(ctx, caller, id, v.n);
+      const made = await makePreview(o.bytes, o.contentType, size);
+      if (made) {
+        const path = previewPath(ctx, v.id, size);
+        await writeFile(`${path}.part`, key.encrypt(made, aad.preview(caller.sub, id, v.id, size)));
+        await rename(`${path}.part`, path);
+      }
+      await ctx.db.query(`UPDATE versions SET ${size === "thumb" ? "thumb_size" : "display_size"} = $2 WHERE id = $1`, [v.id, made?.length ?? 0]);
+      return made;
+    })().finally(() => making.delete(k));
+    making.set(k, p);
+  }
+  const made = await p;
+  if (made) return { bytes: made, contentType: PREVIEW_TYPE, name };
+  const o = await versionContent(ctx, caller, id, v.n);
+  return { bytes: o.bytes, contentType: o.contentType as string, name: o.name };
+}
+
 export async function trashItem(ctx: VaultCtx, caller: Caller, id: string) {
   uuidOr404(id);
   const { rows: versions } = await ctx.db.query<{ id: string }>("SELECT id FROM versions WHERE item_id = $1 AND owner_sub = $2", [id, caller.sub]);
   const del = await ctx.db.query("DELETE FROM items WHERE id = $1 AND owner_sub = $2", [id, caller.sub]);
   if (!del.rowCount) throw notFound("Item not found");
   // Version rows go by cascade; their blobs are removed here (the startup sweep catches anything left behind).
-  for (const v of versions) await rm(blobPath(ctx, v.id), { force: true });
+  for (const v of versions) for (const f of versionFiles(ctx, v.id)) await rm(f, { force: true });
   return { trashed: id };
 }
 
@@ -282,7 +357,7 @@ export async function trashVersion(ctx: VaultCtx, caller: Caller, id: string, n:
   if (!item.versions.some((v) => v.n === n)) throw notFound("Version not found");
   if (item.versions.length === 1) throw badRequest("This is the only version: trash the whole item instead");
   const { rows } = await ctx.db.query<{ id: string }>("DELETE FROM versions WHERE item_id = $1 AND owner_sub = $2 AND n = $3 RETURNING id", [id, caller.sub, n]);
-  for (const r of rows) await rm(blobPath(ctx, r.id), { force: true });
+  for (const r of rows) for (const f of versionFiles(ctx, r.id)) await rm(f, { force: true });
   await ctx.db.query("UPDATE items SET updated_at = now() WHERE id = $1", [id]);
   return getItem(ctx, caller, id);
 }
@@ -318,22 +393,23 @@ export async function pushToDms(ctx: VaultCtx, caller: Caller, id: string, n?: n
 export async function sweepOrphans(ctx: VaultCtx, minAgeMs = 15 * 60_000) {
   const dir = join(ctx.dataDir, "blobs");
   const names = await readdir(dir).catch(() => [] as string[]);
-  const ids: string[] = [];
+  const files: { name: string; id: string }[] = [];
   for (const f of names) {
-    const m = /^([0-9a-f-]{36})(\.part)?$/.exec(f);
+    // A version's file, or one of its previews ("<id>.thumb"), possibly half-written (".part").
+    const m = /^([0-9a-f-]{36})(\.(?:thumb|display))?(\.part)?$/.exec(f);
     if (!m) continue;
     const st = await stat(join(dir, f)).catch(() => null);
     if (!st || Date.now() - st.mtimeMs < minAgeMs) continue;
-    if (m[2]) await rm(join(dir, f), { force: true });
-    else ids.push(f);
+    if (m[3]) await rm(join(dir, f), { force: true });
+    else files.push({ name: f, id: m[1]! });
   }
-  if (!ids.length) return 0;
-  const { rows } = await ctx.db.query<{ id: string }>("SELECT id FROM versions WHERE id = ANY($1::uuid[])", [ids]);
+  if (!files.length) return 0;
+  const { rows } = await ctx.db.query<{ id: string }>("SELECT id FROM versions WHERE id = ANY($1::uuid[])", [[...new Set(files.map((f) => f.id))]]);
   const live = new Set(rows.map((r) => r.id));
   let removed = 0;
-  for (const f of ids) {
-    if (!live.has(f)) {
-      await rm(blobPath(ctx, f), { force: true });
+  for (const f of files) {
+    if (!live.has(f.id)) {
+      await rm(join(dir, f.name), { force: true });
       removed++;
     }
   }

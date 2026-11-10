@@ -9,10 +9,11 @@ import { badRequest, createCallerAuthenticator, createDb, createServer, env, env
 import { mountMcp, McpServer, toolResult } from "@ilven/common/mcp";
 import { Icloud, ICLOUD_MIGRATION } from "./icloud.ts";
 import { sniff } from "./sniff.ts";
+import { makePreview, PREVIEW_SIZES, PREVIEW_TYPE, PreviewCache } from "./previews.ts";
 import { DmsSource, HttpSource, sourceConfigSchema, sourceQuerySchema, SourceRegistry } from "./sources.ts";
 import {
   addVersion, getItem, label, listItems, MIGRATIONS, pushToDms, quota, renameItem, stageFromSource, stageUpload, sweepOrphans,
-  titleSchema, trashItem, trashVersion, versionContent, type VaultCtx,
+  titleSchema, trashItem, trashVersion, versionContent, versionPreview, type VaultCtx,
 } from "./vault.ts";
 
 const PREFIX = "/apps/locke-vault";
@@ -71,6 +72,9 @@ const body = (b: unknown) => {
 };
 const idParam = (p: unknown) => z.object({ id: z.string() }).parse(p).id;
 const nParam = (p: unknown) => z.object({ n: z.coerce.number().int().min(1) }).parse(p).n;
+/** `?size=thumb|display`: a preview (WebP) for viewing; no size: the original (downloads, pushes, processing). */
+const sizeOf = (q: unknown) => z.object({ size: z.enum(PREVIEW_SIZES).optional() }).parse(q ?? {}).size;
+const sourcePreviews = new PreviewCache();
 const A = `${PREFIX}/api`;
 
 web.get(`${A}/quota`, async (req) => quota(ctx, (await auth(req)).sub));
@@ -99,11 +103,14 @@ web.post(`${A}/items/:id/versions`, async (req, reply) => {
   return reply.status(201).send(await addVersion(ctx, c, idParam(req.params), body(req.body), q));
 });
 web.get(`${A}/items/:id/content`, async (req, reply) => {
-  const v = await versionContent(ctx, await auth(req), idParam(req.params));
+  const size = sizeOf(req.query);
+  const v = size ? await versionPreview(ctx, await auth(req), idParam(req.params), undefined, size) : await versionContent(ctx, await auth(req), idParam(req.params));
   return sendFile(reply, v.bytes, v.contentType, v.name);
 });
 web.get(`${A}/items/:id/versions/:n/content`, async (req, reply) => {
-  const v = await versionContent(ctx, await auth(req), idParam(req.params), nParam(req.params));
+  const size = sizeOf(req.query);
+  const c = await auth(req);
+  const v = size ? await versionPreview(ctx, c, idParam(req.params), nParam(req.params), size) : await versionContent(ctx, c, idParam(req.params), nParam(req.params));
   return sendFile(reply, v.bytes, v.contentType, v.name);
 });
 web.delete(`${A}/items/:id/versions/:n`, async (req) => trashVersion(ctx, await auth(req), idParam(req.params), nParam(req.params)));
@@ -122,9 +129,20 @@ web.post(`${A}/sources/:source/query`, async (req) => {
 web.get(`${A}/sources/:source/items/:ref/content`, async (req, reply) => {
   const c = await auth(req);
   const { source, ref } = z.object({ source: z.string().max(40), ref: z.string().min(1).max(500) }).parse(req.params);
-  const f = await sources.get(source).fetch(c, ref);
+  const size = sizeOf(req.query);
+  const k = `${c.sub}|${source}|${ref}|${size}`;
+  const hit = size ? sourcePreviews.get(k) : null;
+  if (hit) return sendFile(reply, hit, PREVIEW_TYPE, "preview.webp");
+  const f = await sources.get(source).fetch(c, ref, size ? { size } : {});
   const type = sniff(f.bytes);
   if (!type) return reply.status(415).send({ error: "unsupported_type", message: "This file type can't be previewed or staged" });
+  if (size) {
+    const p = await makePreview(f.bytes, type, size);
+    if (p) {
+      sourcePreviews.set(k, p);
+      return sendFile(reply, p, PREVIEW_TYPE, "preview.webp");
+    }
+  }
   return sendFile(reply, f.bytes, type, f.name);
 });
 
@@ -149,7 +167,11 @@ web.post(`${X}/connect`, async (req) => {
   return needIcloud().connect(await auth(req), b.appleId, b.password);
 });
 web.post(`${X}/verify`, async (req) => needIcloud().verify(await auth(req), z.object({ code: z.string().regex(/^\d{6}$/) }).parse(req.body).code));
-web.post(`${X}/disconnect`, async (req) => needIcloud().disconnect(await auth(req)));
+web.post(`${X}/disconnect`, async (req) => {
+  const c = await auth(req);
+  sourcePreviews.dropUser(c.sub); // previews of the albums go with the connection
+  return needIcloud().disconnect(c);
+});
 web.get(`${X}/albums`, async (req) => needIcloud().albums(await auth(req)));
 web.put(`${X}/albums`, async (req) => needIcloud().setAlbums(await auth(req), z.object({ collections: z.array(z.string().min(1).max(100)).max(50) }).parse(req.body).collections));
 web.get(`${A}/admin/experimental`, async (req) => {
@@ -159,6 +181,7 @@ web.get(`${A}/admin/experimental`, async (req) => {
 web.post(`${A}/admin/experimental/:id`, async (req) => {
   requireAdmin(await auth(req));
   const { status } = z.object({ status: z.enum(["granted", "revoked", "removed"]) }).parse(req.body);
+  if (status !== "granted") sourcePreviews.clear(); // a revoked user's previews must not outlive their access
   return needIcloud().decide(idParam(req.params), status);
 });
 

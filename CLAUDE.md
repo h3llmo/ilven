@@ -333,6 +333,12 @@ Integration `integrations/locke-vault/`: middleware between Locke (and other app
 - **Next (decided):** automatic import from the album, Locke auto-enhancement, then auto-save to DMS and trash after N
   days to keep the vault a staging area. A proper photo-sync app (Immich/Dropbox-like) replaces iCloud later.
 - Accepted types are detected from bytes (PNG, JPEG, GIF, WebP, HEIC, AVIF, PDF), 25 MB per file.
+- **Previews (2026-11-10):** content routes take `?size=thumb|display` (WebP, ~480 / 2048 px, oriented, no metadata,
+  never larger than the original); no size = the original (downloads, pushes, apps that process it). Each version's
+  previews are stored next to it, encrypted with the user's key (AAD bound to user/item/version/size), counted in the
+  quota; versions from before are previewed on first view. Source items: the `size` hint is passed to the source
+  (iCloud answers with Apple's own small copies, no original downloaded or converted), the vault scales whatever comes
+  back and keeps it in memory for 15 minutes (per user, bounded, dropped on iCloud disconnect or revoke).
 - MCP tools for Ilven-AI (empty default preset): list_staged, get_staged, list_sources, search_source,
   stage_from_source, save_to_documents, trash_staged and trash_version (destructive).
 - Public host `locke-vault.<domain>`: integrated systems keep their own name (`ILVEN_APP_HOSTS`; the gateway maps

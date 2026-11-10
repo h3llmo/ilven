@@ -454,8 +454,26 @@ def to_jpeg(raw: bytes) -> bytes:
         return out.getvalue()
 
 
+# Previews: Apple's own smaller JPEGs (thumb ≈ 360 px, medium ≈ 1–2k px), so browsing an album never downloads
+# originals nor converts HEIC. The vault scales them to its preview sizes.
+PREVIEW = {"thumb": (("thumb", "medium"), 480), "display": (("medium",), 2048)}
+
+
+def to_preview(raw: bytes, side: int) -> bytes:
+    with Image.open(io.BytesIO(raw)) as im:
+        im = ImageOps.exif_transpose(im)
+        if im.mode not in ("RGB", "L"):
+            im = im.convert("RGB")
+        im.thumbnail((side, side))
+        out = io.BytesIO()
+        im.save(out, "JPEG", quality=85)
+        return out.getvalue()
+
+
 @app.get("/content")
-def content(user: str, album: str, ref: str):
+def content(user: str, album: str, ref: str, size: str | None = None):
+    if size is not None and size not in PREVIEW:
+        raise HTTPException(400, {"error": "bad_request", "message": "size: thumb or display"})
     if not re.match(r"^[\w\-/+=.:]{1,300}$", ref):
         raise HTTPException(404, {"error": "not_found", "message": "Photo not found"})
     s = sessions.get(check_user(user))
@@ -466,6 +484,16 @@ def content(user: str, album: str, ref: str):
             photo = _album(s, album).get(ref)
         if photo is None or photo.item_type != "image":
             raise HTTPException(404, {"error": "not_found", "message": "Photo not found in this album"})
+        raw = None
+        if size:
+            versions = photo.versions or {}
+            for v in PREVIEW[size][0]:
+                if v in versions:
+                    raw = photo.download(v)
+                    if raw:
+                        break
+        if raw:
+            return Response(to_preview(raw, PREVIEW[size][1]), media_type="image/jpeg", headers={"content-disposition": 'inline; filename="preview.jpg"'})
         if photo.size and photo.size > MAX_BYTES * 2:
             raise HTTPException(413, {"error": "too_large", "message": "This photo is too large"})
         raw = photo.download("original")

@@ -9,7 +9,8 @@ await build({
   format: "esm",
   outfile: "dist/index.mjs",
   sourcemap: true,
-  external: ["pg-native"],
+  // sharp is native: shipped next to the bundle by the services that use it (see their Dockerfile).
+  external: ["pg-native", "sharp"],
   banner: { js: "import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);" },
   logLevel: "info",
 });

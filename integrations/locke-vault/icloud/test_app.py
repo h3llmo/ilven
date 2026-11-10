@@ -79,6 +79,15 @@ class FakePhoto:
         self.filename = f"IMG_{i}.HEIC"
         self.size = 1000
         self.asset_date = datetime(2020, 1, 1) + timedelta(days=i)
+        self.versions = {"original": {}, "medium": {}, "thumb": {}}
+        self.downloads = []
+
+    def download(self, version="original"):
+        self.downloads.append(version)
+        side = {"original": 4000, "medium": 1600, "thumb": 360}[version]
+        out = io.BytesIO()
+        Image.new("RGB", (side, side * 3 // 4), "red").save(out, "JPEG")
+        return out.getvalue()
 
 
 class FakeAlbums(list):
@@ -142,6 +151,19 @@ class ListingTest(unittest.TestCase):
         # A new first page reads the album again (photos may have been added).
         self.c.post("/query", headers=self.h, json={"user": USER, "album": "Locke", "limit": 10})
         self.assertEqual(self.locke.reads, 2)
+
+    def test_previews_use_apples_small_copies_never_the_original(self):
+        photo = self.locke._photos[3]
+        for size, side in (("thumb", 360), ("display", 1600)):
+            r = self.c.get(f"/content?user={USER}&album=Locke&ref=p3&size={size}", headers=self.h)
+            self.assertEqual(r.status_code, 200)
+            with Image.open(io.BytesIO(r.content)) as im:
+                self.assertEqual(max(im.size), side)
+        self.assertEqual(photo.downloads, ["thumb", "medium"])
+        r = self.c.get(f"/content?user={USER}&album=Locke&ref=p3", headers=self.h)
+        with Image.open(io.BytesIO(r.content)) as im:
+            self.assertEqual(max(im.size), 4000, "no size: the original")
+        self.assertEqual(self.c.get(f"/content?user={USER}&album=Locke&ref=p3&size=huge", headers=self.h).status_code, 400)
 
     def test_smart_albums_by_name(self):
         r = self.c.post("/query", headers=self.h, json={"user": USER, "album": "Hidden"}).json()

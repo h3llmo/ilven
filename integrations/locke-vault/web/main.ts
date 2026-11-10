@@ -75,12 +75,18 @@ async function loadQuota() {
 }
 
 // ---- Staged items ----
+/**
+ * A version's address. `size`: a small preview (grids: thumb, viewer: display); none: the original (download only).
+ * `at` makes the address unique even when "Undo" frees a version number that a later version reuses.
+ */
+const versionUrl = (it: Item, v: Version, size?: "thumb" | "display") =>
+  `${A}/items/${it.id}/versions/${v.n}/content?${new URLSearchParams({ ...(size ? { size } : {}), at: String(Date.parse(v.createdAt)) })}`;
 let items: Item[] = [];
 let itemsCursor: string | null = null;
 
 function itemTile(it: Item) {
   const v = it.versions[it.versions.length - 1]!;
-  const thumb = preview(`${A}/items/${it.id}/versions/${v.n}/content`, v.contentType, it.title);
+  const thumb = preview(versionUrl(it, v, "thumb"), v.contentType, it.title);
   thumb.onclick = () => openDetail(it.id);
   const badges = el("div");
   badges.append(el("span", { className: "badge", textContent: `v${it.currentVersion}` }));
@@ -132,7 +138,7 @@ let current: Item | null = null;
 let selectedN = 0;
 
 function figure(it: Item, v: Version) {
-  const url = `${A}/items/${it.id}/versions/${v.n}/content`;
+  const url = versionUrl(it, v, DISPLAYABLE.test(v.contentType) ? "display" : undefined);
   const fig = el("figure");
   const cap = el("figcaption", { textContent: `v${v.n} · ${v.app}/${v.operation}` });
   if (DISPLAYABLE.test(v.contentType)) {
@@ -177,7 +183,7 @@ function renderDetail() {
   const dl = $<HTMLAnchorElement>("dDownload");
   dl.onclick = async (e) => {
     e.preventDefault();
-    const u = await blobUrl(`${A}/items/${it.id}/versions/${v.n}/content`);
+    const u = await blobUrl(versionUrl(it, v));
     if (!u) return;
     const a = el("a", { href: u, download: `${it.title}-v${v.n}` });
     a.click();
@@ -273,7 +279,7 @@ $("sourceSelect").onchange = onSourceChange;
 $("searchCollection").onchange = () => void search();
 
 function resultTile(s: Source, r: SourceItem) {
-  const url = `${A}/sources/${encodeURIComponent(s.id)}/items/${encodeURIComponent(r.ref)}/content`;
+  const url = `${A}/sources/${encodeURIComponent(s.id)}/items/${encodeURIComponent(r.ref)}/content?size=thumb`;
   const btn = el("button", { textContent: "Stage" });
   btn.onclick = async () => {
     btn.disabled = true;
@@ -412,9 +418,12 @@ function renderAlbums(chosen: string[], lib: { albums: string[]; smart: string[]
   ids.sort((x, y) => rank(x) - rank(y));
   $("icAlbumFilter").hidden = ids.length < 12;
   list.replaceChildren(...ids.map((id) => {
-    const box = el("input", { type: "checkbox", value: id, checked: chosen.includes(id) });
+    const box: HTMLInputElement = document.createElement("input");
+    Object.assign(box, { type: "checkbox", value: id, checked: chosen.includes(id) });
     const missing = lib && !lib.smart.map((n) => n.toLowerCase()).includes(id) && !lib.albums.includes(id.slice(2));
-    return el("label", { className: "check" }, box, ` ${smartLabels[id] ?? id.slice(2)}${missing ? " (not found in iCloud)" : ""}`);
+    const label: HTMLLabelElement = el<"label">("label", { className: "check" });
+    label.append(box, ` ${smartLabels[id] ?? id.slice(2)}${missing ? " (not found in iCloud)" : ""}`);
+    return label;
   }));
 }
 $("icAlbumFilter").oninput = () => {

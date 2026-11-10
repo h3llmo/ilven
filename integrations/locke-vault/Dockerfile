@@ -11,4 +11,9 @@ ENV NODE_ENV=production
 WORKDIR /app
 USER node
 COPY --from=build /src/integrations/locke-vault/dist/ ./
+# Image previews (thumbnails, display sizes): sharp and its native libvips, outside the bundle.
+COPY --from=build /src/node_modules/sharp ./node_modules/sharp
+COPY --from=build /src/node_modules/@img ./node_modules/@img
+COPY --from=build /src/node_modules/semver ./node_modules/semver
+COPY --from=build /src/node_modules/detect-libc ./node_modules/detect-libc
 CMD ["node", "--enable-source-maps", "index.mjs"]

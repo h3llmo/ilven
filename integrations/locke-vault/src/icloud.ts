@@ -228,14 +228,15 @@ export class Icloud implements DataSource {
     return { ...page, items: page.items.map((i) => ({ ...i, ref: `c.${Buffer.from(c.id).toString("base64url")}.${i.ref}` })) };
   }
 
-  async fetch(caller: Caller, ref: string) {
+  /** With `size`, Apple's own smaller copies (no original downloaded, no HEIC conversion): previews in the browser. */
+  async fetch(caller: Caller, ref: string, opts: { size?: "thumb" | "display" } = {}) {
     if (ref.length > 500) throw badRequest("Invalid reference");
     const m = /^c\.([A-Za-z0-9_-]{1,200})\.(.+)$/.exec(ref);
     // Refs from before albums were collections have no album: they belong to the first chosen album.
     const c = await this.collection(caller, m ? Buffer.from(m[1]!, "base64url").toString("utf8") : undefined);
     const photo = m ? m[2]! : ref;
     if (photo.length > 300) throw badRequest("Invalid reference");
-    const r = await this.sidecar(`/content?user=${this.uid(caller.sub)}&album=${encodeURIComponent(c.album)}&ref=${encodeURIComponent(photo)}`);
+    const r = await this.sidecar(`/content?user=${this.uid(caller.sub)}&album=${encodeURIComponent(c.album)}&ref=${encodeURIComponent(photo)}${opts.size ? `&size=${opts.size}` : ""}`);
     const bytes = Buffer.from(await r.arrayBuffer());
     if (bytes.length > this.maxBytes) throw new HttpError(413, "too_large", "This photo is too large");
     const n = /filename="([^"]*)"/.exec(r.headers.get("content-disposition") ?? "");

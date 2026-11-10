@@ -9,6 +9,8 @@ import { HttpError, notFound, type Caller } from "@ilven/common";
  *   GET  {base}                       → SourceInfo
  *   POST {base}/query   SourceQuery   → { items: SourceItem[], cursor: string | null }
  *   GET  {base}/items/{ref}/content   → the file bytes
+ *        ?size=thumb|display (optional hint): a smaller image is welcome for previews (about 480 / 2048 px on the
+ *        long side); a source that ignores it returns the original and the vault scales it down itself.
  * The vault calls it with the user's own credential (IdP token or Ilven API key), so a source only ever returns
  * that user's files.
  *
@@ -78,7 +80,8 @@ export interface DataSource {
   readonly id: string;
   info(caller: Caller): Promise<SourceInfo>;
   query(caller: Caller, q: SourceQuery): Promise<SourcePage>;
-  fetch(caller: Caller, ref: string): Promise<{ bytes: Buffer; name: string }>;
+  /** The file; with `size`, a smaller copy is welcome (previews), the original is fine too. */
+  fetch(caller: Caller, ref: string, opts?: { size?: "thumb" | "display" }): Promise<{ bytes: Buffer; name: string }>;
 }
 
 const TIMEOUT_MS = 30_000;
@@ -127,8 +130,8 @@ export class HttpSource implements DataSource {
     return parsed.data;
   }
 
-  async fetch(caller: Caller, ref: string) {
-    const res = await this.call(caller, `/items/${encodeURIComponent(ref)}/content`);
+  async fetch(caller: Caller, ref: string, opts: { size?: "thumb" | "display" } = {}) {
+    const res = await this.call(caller, `/items/${encodeURIComponent(ref)}/content${opts.size ? `?size=${opts.size}` : ""}`);
     const cd = res.headers.get("content-disposition") ?? "";
     const m = /filename="([^"]*)"/.exec(cd);
     return { bytes: await readLimited(res, this.maxBytes), name: m ? decodeURIComponent(m[1]!) : ref };
