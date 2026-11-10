@@ -316,8 +316,8 @@ Integration `integrations/locke-vault/`: middleware between Locke (and other app
   filter on one: one source, many collections, so the vault's source list stays fixed) and **addedAfter** ("new since",
   oldest first, items carry `addedAt`) for automated workflows. iCloud can't know when a photo entered an album, so it
   doesn't offer addedAfter: workflows list it and remember processed refs.
-- **Versions are linear** (decided 2026-11-08, no alternatives): a workflow chains enhance → face swap → background
-  blur (last). If the user doesn't like a step, they roll back: the latest version is deleted by its number (viewer
+- **Versions are linear** (decided 2026-11-08, no alternatives): a workflow chains its steps (face swap, enhance,
+  upscale, background blur; any order since 2026-11-10), one version each. If the user doesn't like a step, they roll back: the latest version is deleted by its number (viewer
   "Undo last step"; API `DELETE items/:id/versions/:n`), so a version added meanwhile is never the one removed.
 - **iCloud Photos (EXPERIMENTAL, 2026-11-07):** sidecar `locke-vault-icloud` (Python, `pyicloud` timlaing fork) reads only
   the albums each user ticks (2026-11-09: several albums plus the smart albums Favorites and Hidden, each a collection
